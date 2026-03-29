@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(printf '%s\\\\n' '/* Tailwind CSS v4 — importa todos los estilos base, utilidades y componentes */' '@import \"\"tailwindcss\"\";')",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(dir \"D:\\\\gymtracker\\\\node_modules\\\\tslib\")",
+      "Bash(node -e \"require\\(''tslib''\\); console.log\\(''found at'', require.resolve\\(''tslib''\\)\\)\")"
+    ]
+  }
+}
