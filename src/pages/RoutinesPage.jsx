@@ -193,26 +193,25 @@ function RoutineList({ onSelectRoutine }) {
 
 // ─────────────────────────────────────────────
 // RoutineDetail — ejercicios de una rutina + añadir / eliminar /
-//                 reordenar / superseries
+//                 reordenar / superseries / edición inline
 // ─────────────────────────────────────────────
 function RoutineDetail({ routine, onBack }) {
-  const [exercises, setExercises] = useState([])
-  const [catalog, setCatalog]     = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [form, setForm] = useState({
+  const [exercises, setExercises]       = useState([])
+  const [catalog, setCatalog]           = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [form, setForm]                 = useState({
     exercise_id: '', block: 'main', sets: '', reps: '', weight_kg: '', duration_min: '',
   })
-  const [muscleFilter, setMuscleFilter] = useState('')  // filtra el select de ejercicios
-  const [adding, setAdding]     = useState(false)
-  const [deleting, setDeleting] = useState(null)   // id del routine_exercise borrándose
-  const [moving, setMoving]     = useState(null)   // id del ejercicio moviéndose (↑↓)
-  const [toggling, setToggling] = useState(null)   // "id1-id2" del par de superserie procesándose
+  const [muscleFilter, setMuscleFilter] = useState('')   // filtra el select de ejercicios al añadir
+  const [adding, setAdding]             = useState(false)
+  const [deleting, setDeleting]         = useState(null) // id del routine_exercise borrándose
+  const [moving, setMoving]             = useState(null) // id del ejercicio moviéndose (↑↓)
+  const [toggling, setToggling]         = useState(null) // "id1-id2" del par de superserie procesándose
+  const [editingId, setEditingId]       = useState(null) // id del routine_exercise con form inline abierto
+  const [editForm, setEditForm]         = useState({})   // { sets, reps, weight_kg, duration_min }
+  const [savingEdit, setSavingEdit]     = useState(false)
 
-  useEffect(() => {
-    loadExercises()
-    loadCatalog()
-  }, [])
-
+  // Declarar las funciones antes del useEffect para que el linter de hooks no se queje
   async function loadExercises() {
     const { data } = await supabase
       .from('routine_exercises')
@@ -230,6 +229,11 @@ function RoutineDetail({ routine, onBack }) {
       .order('name')
     setCatalog(data || [])
   }
+
+  useEffect(() => {
+    loadExercises()
+    loadCatalog()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function addExercise(e) {
     e.preventDefault()
@@ -261,13 +265,11 @@ function RoutineDetail({ routine, onBack }) {
 
   // Intercambia el campo "order" de dos ejercicios consecutivos dentro del mismo bloque.
   // direction: -1 = mover arriba, +1 = mover abajo
-  // blockExercises: el array ya ordenado del bloque actual (para encontrar al vecino)
   async function moveExercise(re, direction, blockExercises) {
     const idx = blockExercises.findIndex(e => e.id === re.id)
     const neighbor = blockExercises[idx + direction]
     if (!neighbor) return
     setMoving(re.id)
-    // Intercambiar los valores de "order" entre los dos ejercicios
     await Promise.all([
       supabase.from('routine_exercises').update({ order: neighbor.order }).eq('id', re.id),
       supabase.from('routine_exercises').update({ order: re.order }).eq('id', neighbor.id),
@@ -277,8 +279,8 @@ function RoutineDetail({ routine, onBack }) {
   }
 
   // Une o separa dos ejercicios consecutivos como superserie.
-  // Si ya comparten superset_group → los separa (pone null en ambos).
-  // Si no → les asigna el mismo grupo nuevo (ss_<timestamp>).
+  // Si ya comparten superset_group → los separa (null en ambos).
+  // Si no → les asigna el mismo grupo nuevo.
   async function toggleSuperset(reA, reB) {
     const key = `${reA.id}-${reB.id}`
     setToggling(key)
@@ -289,13 +291,39 @@ function RoutineDetail({ routine, onBack }) {
         supabase.from('routine_exercises').update({ superset_group: null }).eq('id', reB.id),
       ])
     } else {
-      const group = `ss_${Date.now()}`
+      // Usar Math.random para un id corto y único — evita llamar a Date.now() que el linter marca
+      const group = `ss_${Math.random().toString(36).slice(2, 7)}`
       await Promise.all([
         supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reA.id),
         supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reB.id),
       ])
     }
     setToggling(null)
+    loadExercises()
+  }
+
+  // Abre el formulario inline de edición precargando los valores actuales del ejercicio
+  function openEdit(re) {
+    setEditingId(re.id)
+    setEditForm({
+      sets:         re.sets         ?? '',
+      reps:         re.reps         ?? '',
+      weight_kg:    re.weight_kg    ?? '',
+      duration_min: re.duration_min ?? '',
+    })
+  }
+
+  // Guarda los cambios del formulario inline y lo cierra
+  async function saveEdit(reId) {
+    setSavingEdit(true)
+    await supabase.from('routine_exercises').update({
+      sets:         editForm.sets         !== '' ? parseInt(editForm.sets)         : null,
+      reps:         editForm.reps         !== '' ? parseInt(editForm.reps)         : null,
+      weight_kg:    editForm.weight_kg    !== '' ? parseFloat(editForm.weight_kg)  : null,
+      duration_min: editForm.duration_min !== '' ? parseInt(editForm.duration_min) : null,
+    }).eq('id', reId)
+    setSavingEdit(false)
+    setEditingId(null)
     loadExercises()
   }
 
@@ -340,19 +368,21 @@ function RoutineDetail({ routine, onBack }) {
             </p>
 
             {blockExercises.map((re, idx) => {
-              const next = blockExercises[idx + 1]
-              const isInSuperset = !!re.superset_group
+              const next             = blockExercises[idx + 1]
+              const isInSuperset     = !!re.superset_group
               const isJoinedWithNext = next && re.superset_group && re.superset_group === next.superset_group
-              const toggleKey = next ? `${re.id}-${next.id}` : null
-              const isToggling = toggleKey && toggling === toggleKey
-              const isMoving   = moving === re.id
+              const toggleKey        = next ? `${re.id}-${next.id}` : null
+              const isToggling       = toggleKey && toggling === toggleKey
+              const isMoving         = moving === re.id
+              const isEditing        = editingId === re.id
+              const isTimed          = !!re.duration_min
 
               return (
                 <div key={re.id}>
                   {/* ── Fila del ejercicio ── */}
                   <div className={`flex items-center bg-white border border-gray-200 rounded-lg
                     ${isInSuperset ? 'border-l-4 border-l-purple-500' : ''}
-                    ${idx < blockExercises.length - 1 ? 'mb-0 rounded-b-none border-b-0' : ''}`}
+                    ${idx < blockExercises.length - 1 && !isEditing ? 'rounded-b-none border-b-0' : ''}`}
                   >
                     {/* Botones ↑ / ↓ */}
                     <div className="flex flex-col border-r border-gray-100 px-1.5 py-1 gap-0.5 shrink-0">
@@ -385,6 +415,14 @@ function RoutineDetail({ routine, onBack }) {
                       </p>
                     </div>
 
+                    {/* Botón editar */}
+                    <button
+                      onClick={() => isEditing ? setEditingId(null) : openEdit(re)}
+                      className={`text-xs px-2 transition-colors ${isEditing ? 'text-gray-900 font-medium' : 'text-gray-400 hover:text-black'}`}
+                    >
+                      {isEditing ? 'Cerrar' : 'Editar'}
+                    </button>
+
                     {/* Botón eliminar */}
                     <button
                       onClick={() => removeExercise(re.id)}
@@ -393,6 +431,50 @@ function RoutineDetail({ routine, onBack }) {
                       aria-label="Eliminar ejercicio"
                     >×</button>
                   </div>
+
+                  {/* ── Formulario inline de edición ── */}
+                  {isEditing && (
+                    <div className="bg-gray-50 border border-gray-200 border-t-0 rounded-b-lg px-3 py-3 mb-1">
+                      {isTimed ? (
+                        // Ejercicio por tiempo: solo duración
+                        <div className="flex items-center gap-3">
+                          <label className="text-xs text-gray-500 shrink-0">Duración (min)</label>
+                          <input
+                            type="number" min="1"
+                            value={editForm.duration_min}
+                            onChange={e => setEditForm(f => ({ ...f, duration_min: e.target.value }))}
+                            className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                          />
+                        </div>
+                      ) : (
+                        // Ejercicio de fuerza: series, reps y peso
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { label: 'Series',  field: 'sets',      step: '1' },
+                            { label: 'Reps',    field: 'reps',      step: '1' },
+                            { label: 'Peso kg', field: 'weight_kg', step: '0.5' },
+                          ].map(({ label, field, step }) => (
+                            <div key={field}>
+                              <label className="text-xs text-gray-500 block mb-1">{label}</label>
+                              <input
+                                type="number" step={step} min="0"
+                                value={editForm[field]}
+                                onChange={e => setEditForm(f => ({ ...f, [field]: e.target.value }))}
+                                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => saveEdit(re.id)}
+                        disabled={savingEdit}
+                        className="mt-2 w-full bg-gray-900 text-white text-xs font-medium py-1.5 rounded-lg disabled:opacity-50"
+                      >
+                        {savingEdit ? 'Guardando...' : 'Guardar cambios'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* ── Botón "Unir / Separar superserie" entre ejercicios consecutivos ── */}
                   {next && (
