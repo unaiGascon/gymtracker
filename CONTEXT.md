@@ -17,6 +17,8 @@
 
 Sin login, sin roles, sin entrenadores. Solo una persona usando la app para registrar sus entrenamientos.
 
+**La app está desplegada en Vercel y funciona en producción.**
+
 ---
 
 ## Stack
@@ -26,9 +28,10 @@ Sin login, sin roles, sin entrenadores. Solo una persona usando la app para regi
 | Frontend | React 19 + Vite 8 | `npm run dev` → localhost:5173 |
 | Estilos | Tailwind CSS v4 | Plugin `@tailwindcss/vite` (NO postcss). `@import "tailwindcss"` en index.css |
 | Base de datos | Supabase (PostgreSQL) | Actúa de BD y API — sin backend propio |
-| Ejecución | Local (localhost) | Sin deploy aún |
+| Ejecución | Vercel (producción) + localhost (desarrollo) | Deploy automático desde la rama main |
 
-**Credenciales Supabase** en `.env` (en `.gitignore`, nunca subir):
+**Credenciales Supabase** en `.env` para desarrollo local (en `.gitignore`, nunca subir).
+En producción las mismas variables están configuradas en Vercel → Settings → Environment Variables:
 ```
 VITE_SUPABASE_URL=https://tagzwyoigooccmprpvdy.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJ...
@@ -207,17 +210,34 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 
 ---
 
+## Supabase — RLS (Row Level Security)
+
+RLS está **activado** en todas las tablas. Las políticas actuales son de **acceso público temporal** (para v1 sin login), que permiten leer y escribir a cualquier usuario con la anon key:
+
+```sql
+-- Ejemplo del patrón usado en cada tabla:
+create policy "public read"  on exercises for select using (true);
+create policy "public write" on exercises for insert with check (true);
+create policy "public update" on exercises for update using (true);
+create policy "public delete" on exercises for delete using (true);
+```
+
+> ⚠️ Estas políticas se reemplazarán en v2 por políticas basadas en `auth.uid()` cuando se añada login.
+
+---
+
 ## Estado actual
 
 - [x] Proyecto React + Vite + Tailwind v4 inicializado
 - [x] Cliente Supabase instalado y configurado
 - [x] Proyecto Supabase creado con credenciales en `.env`
-- [x] Esquema de base de datos diseñado (SQL listo arriba)
+- [x] Tablas creadas en Supabase
+- [x] RLS activado con políticas de acceso público temporal
 - [x] `HomePage` — selección de rutina con "Hoy" automático
 - [x] `WorkoutPage` — registro de series completo
 - [x] `HistoryPage` — historial con detalle de sesiones
 - [x] `RoutinesPage` — gestión de rutinas y catálogo de ejercicios
-- [ ] Crear las tablas en Supabase (ejecutar el SQL del apartado anterior)
+- [x] Deploy en Vercel con variables de entorno configuradas
 - [ ] Poblar el catálogo de ejercicios con datos iniciales
 - [ ] Crear las primeras rutinas con sus ejercicios
 - [ ] Prueba completa de un entrenamiento de principio a fin
@@ -234,11 +254,11 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 
 ---
 
-## Versiones futuras (no tocar hasta completar v1)
+## Versiones futuras
 
 ### v2 — Login y uso propio seguro
 - Supabase Auth con email/contraseña
-- Row Level Security en Supabase
+- Sustituir las políticas RLS públicas por políticas basadas en `auth.uid()`
 - Añadir `user_id` a `workout_logs` y `routines`
 
 ### v3 — Entrenadores y clientes
@@ -259,8 +279,10 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 ## Mensaje para reanudar en una nueva sesión
 
 ```
-Lee el CONTEXT.md adjunto. GymTracker v1 está casi completo —
-React + Vite + Tailwind v4 + Supabase, sin backend propio.
-Las cuatro pantallas están implementadas: HomePage, WorkoutPage,
-HistoryPage y RoutinesPage. El siguiente paso es [DESCRIBIR TAREA].
+Lee el CONTEXT.md adjunto. GymTracker v1 está desplegado en Vercel
+y funciona en producción — React + Vite + Tailwind v4 + Supabase,
+sin backend propio. Las cuatro pantallas están implementadas:
+HomePage, WorkoutPage, HistoryPage y RoutinesPage.
+RLS activado en Supabase con políticas públicas temporales (sin login aún).
+El siguiente paso es [DESCRIBIR TAREA].
 ```

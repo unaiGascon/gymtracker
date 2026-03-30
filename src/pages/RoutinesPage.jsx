@@ -192,7 +192,8 @@ function RoutineList({ onSelectRoutine }) {
 }
 
 // ─────────────────────────────────────────────
-// RoutineDetail — ejercicios de una rutina + añadir / eliminar
+// RoutineDetail — ejercicios de una rutina + añadir / eliminar /
+//                 reordenar / superseries
 // ─────────────────────────────────────────────
 function RoutineDetail({ routine, onBack }) {
   const [exercises, setExercises] = useState([])
@@ -201,8 +202,11 @@ function RoutineDetail({ routine, onBack }) {
   const [form, setForm] = useState({
     exercise_id: '', block: 'main', sets: '', reps: '', weight_kg: '', duration_min: '',
   })
+  const [muscleFilter, setMuscleFilter] = useState('')  // filtra el select de ejercicios
   const [adding, setAdding]     = useState(false)
-  const [deleting, setDeleting] = useState(null)
+  const [deleting, setDeleting] = useState(null)   // id del routine_exercise borrándose
+  const [moving, setMoving]     = useState(null)   // id del ejercicio moviéndose (↑↓)
+  const [toggling, setToggling] = useState(null)   // "id1-id2" del par de superserie procesándose
 
   useEffect(() => {
     loadExercises()
@@ -255,12 +259,58 @@ function RoutineDetail({ routine, onBack }) {
     loadExercises()
   }
 
+  // Intercambia el campo "order" de dos ejercicios consecutivos dentro del mismo bloque.
+  // direction: -1 = mover arriba, +1 = mover abajo
+  // blockExercises: el array ya ordenado del bloque actual (para encontrar al vecino)
+  async function moveExercise(re, direction, blockExercises) {
+    const idx = blockExercises.findIndex(e => e.id === re.id)
+    const neighbor = blockExercises[idx + direction]
+    if (!neighbor) return
+    setMoving(re.id)
+    // Intercambiar los valores de "order" entre los dos ejercicios
+    await Promise.all([
+      supabase.from('routine_exercises').update({ order: neighbor.order }).eq('id', re.id),
+      supabase.from('routine_exercises').update({ order: re.order }).eq('id', neighbor.id),
+    ])
+    setMoving(null)
+    loadExercises()
+  }
+
+  // Une o separa dos ejercicios consecutivos como superserie.
+  // Si ya comparten superset_group → los separa (pone null en ambos).
+  // Si no → les asigna el mismo grupo nuevo (ss_<timestamp>).
+  async function toggleSuperset(reA, reB) {
+    const key = `${reA.id}-${reB.id}`
+    setToggling(key)
+    const alreadyJoined = reA.superset_group && reA.superset_group === reB.superset_group
+    if (alreadyJoined) {
+      await Promise.all([
+        supabase.from('routine_exercises').update({ superset_group: null }).eq('id', reA.id),
+        supabase.from('routine_exercises').update({ superset_group: null }).eq('id', reB.id),
+      ])
+    } else {
+      const group = `ss_${Date.now()}`
+      await Promise.all([
+        supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reA.id),
+        supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reB.id),
+      ])
+    }
+    setToggling(null)
+    loadExercises()
+  }
+
+  // Ejercicios del catálogo filtrados por grupo muscular seleccionado
+  const filteredCatalog = muscleFilter
+    ? catalog.filter(ex => ex.muscle_group === muscleFilter)
+    : catalog
+
   const isTimedBlock = form.block === 'cardio'
 
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Cargando...</div>
   }
 
+  // Agrupar ejercicios por bloque (ya vienen ordenados por "order" desde la query)
   const byBlock = {}
   for (const re of exercises) {
     if (!byBlock[re.block]) byBlock[re.block] = []
@@ -281,40 +331,96 @@ function RoutineDetail({ routine, onBack }) {
         <p className="text-sm text-gray-400 mb-6">Esta rutina no tiene ejercicios aún.</p>
       )}
 
-      {BLOCK_ORDER.filter(b => byBlock[b]).map(block => (
-        <div key={block} className="mb-5">
-          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5">{BLOCK_LABELS[block]}</p>
-          <div className="flex flex-col gap-1">
-            {byBlock[block].map(re => (
-              <div key={re.id} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-3 py-2.5">
-                <div>
-                  <span className="text-sm font-medium">{re.exercises?.name}</span>
-                  {re.exercises?.muscle_group && (
-                    <span className="text-xs text-gray-400 ml-2">{re.exercises.muscle_group}</span>
-                  )}
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {re.duration_min
-                      ? `${re.duration_min} min`
-                      : [re.sets && `${re.sets} series`, re.reps && `${re.reps} reps`, re.weight_kg && `${re.weight_kg} kg`]
-                          .filter(Boolean).join(' · ') || '—'
-                    }
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeExercise(re.id)}
-                  disabled={deleting === re.id}
-                  className="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none ml-3 disabled:opacity-30"
-                  aria-label="Eliminar ejercicio"
-                >×</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      {BLOCK_ORDER.filter(b => byBlock[b]).map(block => {
+        const blockExercises = byBlock[block]
+        return (
+          <div key={block} className="mb-5">
+            <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1.5">
+              {BLOCK_LABELS[block]}
+            </p>
 
+            {blockExercises.map((re, idx) => {
+              const next = blockExercises[idx + 1]
+              const isInSuperset = !!re.superset_group
+              const isJoinedWithNext = next && re.superset_group && re.superset_group === next.superset_group
+              const toggleKey = next ? `${re.id}-${next.id}` : null
+              const isToggling = toggleKey && toggling === toggleKey
+              const isMoving   = moving === re.id
+
+              return (
+                <div key={re.id}>
+                  {/* ── Fila del ejercicio ── */}
+                  <div className={`flex items-center bg-white border border-gray-200 rounded-lg
+                    ${isInSuperset ? 'border-l-4 border-l-purple-500' : ''}
+                    ${idx < blockExercises.length - 1 ? 'mb-0 rounded-b-none border-b-0' : ''}`}
+                  >
+                    {/* Botones ↑ / ↓ */}
+                    <div className="flex flex-col border-r border-gray-100 px-1.5 py-1 gap-0.5 shrink-0">
+                      <button
+                        onClick={() => moveExercise(re, -1, blockExercises)}
+                        disabled={idx === 0 || isMoving}
+                        className="text-gray-300 hover:text-gray-700 disabled:opacity-0 text-xs leading-none px-1"
+                        aria-label="Mover arriba"
+                      >↑</button>
+                      <button
+                        onClick={() => moveExercise(re, +1, blockExercises)}
+                        disabled={idx === blockExercises.length - 1 || isMoving}
+                        className="text-gray-300 hover:text-gray-700 disabled:opacity-0 text-xs leading-none px-1"
+                        aria-label="Mover abajo"
+                      >↓</button>
+                    </div>
+
+                    {/* Nombre, músculo y configuración */}
+                    <div className="flex-1 px-3 py-2.5">
+                      <span className="text-sm font-medium">{re.exercises?.name}</span>
+                      {re.exercises?.muscle_group && (
+                        <span className="text-xs text-gray-400 ml-2">{re.exercises.muscle_group}</span>
+                      )}
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {re.duration_min
+                          ? `${re.duration_min} min`
+                          : [re.sets && `${re.sets} series`, re.reps && `${re.reps} reps`, re.weight_kg && `${re.weight_kg} kg`]
+                              .filter(Boolean).join(' · ') || '—'
+                        }
+                      </p>
+                    </div>
+
+                    {/* Botón eliminar */}
+                    <button
+                      onClick={() => removeExercise(re.id)}
+                      disabled={deleting === re.id}
+                      className="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none px-3 disabled:opacity-30"
+                      aria-label="Eliminar ejercicio"
+                    >×</button>
+                  </div>
+
+                  {/* ── Botón "Unir / Separar superserie" entre ejercicios consecutivos ── */}
+                  {next && (
+                    <button
+                      onClick={() => toggleSuperset(re, next)}
+                      disabled={!!isToggling}
+                      className={`w-full text-xs py-1 border-x border-gray-200 transition-colors disabled:opacity-40
+                        ${isJoinedWithNext
+                          ? 'bg-purple-50 text-purple-600 hover:bg-purple-100 border-l-4 border-l-purple-500'
+                          : 'bg-gray-50 text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                        }`}
+                    >
+                      {isJoinedWithNext ? 'Separar superserie' : '+ Unir como superserie'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+
+      {/* ── Formulario: añadir ejercicio ── */}
       <div className="border border-gray-200 rounded-xl p-4 bg-white mt-4">
         <h2 className="font-semibold text-sm mb-3">Añadir ejercicio</h2>
         <form onSubmit={addExercise} className="flex flex-col gap-3">
+
+          {/* Bloque */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">Bloque</label>
             <select
@@ -325,6 +431,21 @@ function RoutineDetail({ routine, onBack }) {
               {BLOCK_ORDER.map(b => <option key={b} value={b}>{BLOCK_LABELS[b]}</option>)}
             </select>
           </div>
+
+          {/* Filtro por grupo muscular — limpia el ejercicio seleccionado al cambiar */}
+          <div>
+            <label className="text-xs text-gray-500 block mb-1">Filtrar por músculo</label>
+            <select
+              value={muscleFilter}
+              onChange={e => { setMuscleFilter(e.target.value); setForm(f => ({ ...f, exercise_id: '' })) }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-1 focus:ring-gray-400"
+            >
+              <option value="">— Todos —</option>
+              {MUSCLE_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+
+          {/* Select de ejercicio, filtrado por grupo muscular */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">Ejercicio</label>
             <select
@@ -334,13 +455,15 @@ function RoutineDetail({ routine, onBack }) {
               required
             >
               <option value="">— Elige un ejercicio —</option>
-              {catalog.map(ex => (
+              {filteredCatalog.map(ex => (
                 <option key={ex.id} value={ex.id}>
                   {ex.name}{ex.muscle_group ? ` (${ex.muscle_group})` : ''}
                 </option>
               ))}
             </select>
           </div>
+
+          {/* Campos según tipo: por tiempo o por series */}
           {isTimedBlock ? (
             <div>
               <label className="text-xs text-gray-500 block mb-1">Duración (min)</label>
@@ -368,6 +491,7 @@ function RoutineDetail({ routine, onBack }) {
               ))}
             </div>
           )}
+
           <button type="submit" disabled={adding} className="bg-black text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50">
             {adding ? 'Añadiendo...' : 'Añadir ejercicio'}
           </button>
