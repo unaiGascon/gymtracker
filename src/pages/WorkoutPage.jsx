@@ -506,7 +506,7 @@ function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, onUpda
       <div className="relative">
         <input
           type="number" inputMode="numeric"
-          placeholder={prevSet?.reps_done ?? '—'}
+          placeholder="—"
           value={reps}
           onChange={e => onUpdate(exerciseId, setIndex, 'reps', e.target.value)}
           className={`w-full border rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-1
@@ -518,7 +518,7 @@ function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, onUpda
       <div className="relative">
         <input
           type="number" inputMode="decimal" step="0.5"
-          placeholder={prevSet?.weight_done ?? '—'}
+          placeholder="—"
           value={weight}
           onChange={e => onUpdate(exerciseId, setIndex, 'weight', e.target.value)}
           className={`w-full border rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-1
