@@ -13,6 +13,7 @@ import HomePage     from './pages/HomePage'
 import WorkoutPage  from './pages/WorkoutPage'
 import HistoryPage  from './pages/HistoryPage'
 import RoutinesPage from './pages/RoutinesPage'
+import ProgressPage from './pages/ProgressPage'
 
 export default function App() {
   const [page, setPage]               = useState('home')
@@ -31,6 +32,7 @@ export default function App() {
     { id: 'home',     label: 'Inicio'    },
     { id: 'history',  label: 'Historial' },
     { id: 'routines', label: 'Rutinas'   },
+    { id: 'progress', label: 'Progreso'  },
   ]
 
   // La barra de navegación se oculta durante un entrenamiento activo
@@ -76,6 +78,10 @@ export default function App() {
 
         {page === 'routines' && (
           <RoutinesPage />
+        )}
+
+        {page === 'progress' && (
+          <ProgressPage />
         )}
       </main>
     </div>
