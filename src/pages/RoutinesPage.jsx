@@ -96,14 +96,28 @@ export default function RoutinesPage() {
 }
 
 // ─────────────────────────────────────────────
-// RoutineList — lista de rutinas + formulario para crear nueva
+// RoutineList — lista de rutinas + crear nueva
+//
+// Interacción por fila:
+//   - Clic en el nombre → expande panel con "Ver ejercicios" / "Editar"
+//   - "Ver ejercicios"  → navega al detalle de la rutina
+//   - "Editar"          → abre formulario inline (nombre + orden)
+//   - ↑ / ↓            → reordena intercambiando el campo "order" con la adyacente
+//   - ×                 → eliminar con doble confirmación
 // ─────────────────────────────────────────────
 function RoutineList({ onSelectRoutine }) {
-  const [routines, setRoutines] = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [newName, setNewName]   = useState('')
-  const [newOrder, setNewOrder] = useState('')
-  const [saving, setSaving]     = useState(false)
+  const [routines, setRoutines]               = useState([])
+  const [loading, setLoading]                 = useState(true)
+  const [newName, setNewName]                 = useState('')
+  const [newOrder, setNewOrder]               = useState('')
+  const [saving, setSaving]                   = useState(false)
+  const [expandedId, setExpandedId]           = useState(null)  // muestra "Ver ejercicios" / "Editar"
+  const [editingId, setEditingId]             = useState(null)  // muestra formulario inline de edición
+  const [editForm, setEditForm]               = useState({ name: '', order: '' })
+  const [savingEdit, setSavingEdit]           = useState(false)
+  const [moving, setMoving]                   = useState(null)  // id de rutina reordenándose
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)  // esperando segundo clic para borrar
+  const [deleting, setDeleting]               = useState(null)
 
   useEffect(() => { loadRoutines() }, [])
 
@@ -130,6 +144,58 @@ function RoutineList({ onSelectRoutine }) {
     loadRoutines()
   }
 
+  // Intercambia el campo "order" con la rutina adyacente en la lista
+  async function moveRoutine(r, direction) {
+    const idx      = routines.findIndex(x => x.id === r.id)
+    const neighbor = routines[idx + direction]
+    if (!neighbor) return
+    setMoving(r.id)
+    await Promise.all([
+      supabase.from('routines').update({ order: neighbor.order }).eq('id', r.id),
+      supabase.from('routines').update({ order: r.order }).eq('id', neighbor.id),
+    ])
+    setMoving(null)
+    loadRoutines()
+  }
+
+  // Abre el formulario inline precargando los valores actuales
+  function openEdit(r) {
+    setEditingId(r.id)
+    setExpandedId(null)
+    setEditForm({ name: r.name, order: r.order ?? '' })
+  }
+
+  async function saveEdit(r) {
+    if (!editForm.name.trim()) return
+    setSavingEdit(true)
+    await supabase.from('routines').update({
+      name:  editForm.name.trim(),
+      order: editForm.order !== '' ? parseInt(editForm.order) : null,
+    }).eq('id', r.id)
+    setSavingEdit(false)
+    setEditingId(null)
+    loadRoutines()
+  }
+
+  // Primer clic → pide confirmación; segundo clic → borra
+  async function handleDelete(id) {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id)
+      return
+    }
+    setDeleting(id)
+    setConfirmDeleteId(null)
+    await supabase.from('routines').delete().eq('id', id)
+    setDeleting(null)
+    loadRoutines()
+  }
+
+  function toggleExpand(id) {
+    setExpandedId(prev => prev === id ? null : id)
+    setEditingId(null)
+    setConfirmDeleteId(null)
+  }
+
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Cargando rutinas...</div>
   }
@@ -141,18 +207,120 @@ function RoutineList({ onSelectRoutine }) {
       )}
 
       <div className="flex flex-col gap-2 mb-8">
-        {routines.map(r => (
-          <button
-            key={r.id}
-            onClick={() => onSelectRoutine(r)}
-            className="w-full text-left bg-white border border-gray-200 rounded-xl px-4 py-3 hover:border-gray-400 transition-colors flex items-center justify-between"
-          >
-            <span className="font-medium text-sm">{r.name}</span>
-            <span className="text-xs text-gray-400">#{r.order ?? '—'}</span>
-          </button>
-        ))}
+        {routines.map((r, idx) => {
+          const isExpanded = expandedId === r.id
+          const isEditing  = editingId  === r.id
+          const isMoving   = moving     === r.id
+
+          return (
+            <div key={r.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+
+              {/* ── Fila principal ── */}
+              <div className="flex items-center">
+
+                {/* Botones ↑ / ↓ */}
+                <div className="flex flex-col border-r border-gray-100 px-1.5 py-1 gap-0.5 shrink-0">
+                  <button
+                    onClick={() => moveRoutine(r, -1)}
+                    disabled={idx === 0 || isMoving}
+                    className="text-gray-300 hover:text-gray-700 disabled:opacity-0 text-xs leading-none px-1"
+                    aria-label="Subir rutina"
+                  >↑</button>
+                  <button
+                    onClick={() => moveRoutine(r, +1)}
+                    disabled={idx === routines.length - 1 || isMoving}
+                    className="text-gray-300 hover:text-gray-700 disabled:opacity-0 text-xs leading-none px-1"
+                    aria-label="Bajar rutina"
+                  >↓</button>
+                </div>
+
+                {/* Nombre + orden — clic para expandir el panel de acciones */}
+                <button
+                  onClick={() => toggleExpand(r.id)}
+                  className="flex-1 text-left px-3 py-3 flex items-center justify-between"
+                >
+                  <span className="font-medium text-sm">{r.name}</span>
+                  <span className="text-xs text-gray-400 ml-2">#{r.order ?? '—'}</span>
+                </button>
+
+                {/* Eliminar con doble confirmación */}
+                <button
+                  onClick={() => handleDelete(r.id)}
+                  disabled={deleting === r.id}
+                  className={`text-xs px-3 py-3 transition-colors disabled:opacity-30 ${
+                    confirmDeleteId === r.id
+                      ? 'text-red-500 font-semibold'
+                      : 'text-gray-300 hover:text-red-500'
+                  }`}
+                >
+                  {confirmDeleteId === r.id ? '¿Eliminar?' : '×'}
+                </button>
+              </div>
+
+              {/* ── Panel de acciones (al expandir) ── */}
+              {isExpanded && (
+                <div className="flex border-t border-gray-100">
+                  <button
+                    onClick={() => onSelectRoutine(r)}
+                    className="flex-1 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors border-r border-gray-100"
+                  >
+                    Ver ejercicios
+                  </button>
+                  <button
+                    onClick={() => openEdit(r)}
+                    className="flex-1 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Editar
+                  </button>
+                </div>
+              )}
+
+              {/* ── Formulario inline de edición de nombre y orden ── */}
+              {isEditing && (
+                <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+                  <div className="flex gap-2 mb-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500 block mb-1">Nombre</label>
+                      <input
+                        type="text"
+                        value={editForm.name}
+                        onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                      />
+                    </div>
+                    <div className="w-20">
+                      <label className="text-xs text-gray-500 block mb-1">Orden</label>
+                      <input
+                        type="number" min="1"
+                        value={editForm.order}
+                        onChange={e => setEditForm(f => ({ ...f, order: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveEdit(r)}
+                      disabled={savingEdit}
+                      className="flex-1 bg-gray-900 text-white text-sm font-medium py-1.5 rounded-lg disabled:opacity-50"
+                    >
+                      {savingEdit ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="flex-1 border border-gray-300 text-gray-600 text-sm font-medium py-1.5 rounded-lg"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
+      {/* ── Formulario nueva rutina ── */}
       <div className="border border-gray-200 rounded-xl p-4 bg-white">
         <h2 className="font-semibold text-sm mb-3">Nueva rutina</h2>
         <form onSubmit={createRoutine} className="flex flex-col gap-3">
