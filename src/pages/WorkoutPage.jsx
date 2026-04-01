@@ -71,17 +71,19 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
       initSets[re.exercise_id] = Array.from({ length: numSets }, () => ({ reps: '', weight: '' }))
     }
 
-    // Buscar draft de hoy (completed=false) para esta rutina
+    // Buscar draft de hoy (completed=false) para esta rutina.
+    // Se selecciona el campo completed para verificarlo en JS también,
+    // evitando pre-rellenar si hay un log completado de hoy.
     const today = new Date().toISOString().slice(0, 10)
     const { data: draftLog } = await supabase
       .from('workout_logs')
-      .select('id')
+      .select('id, completed')
       .eq('routine_id', id)
       .eq('logged_date', today)
       .eq('completed', false)
       .maybeSingle()
 
-    if (draftLog) {
+    if (draftLog && draftLog.completed === false) {
       // Hay un draft: cargar sus series y pre-rellenar los inputs
       setDraftLogId(draftLog.id)
       const { data: draftSets } = await supabase
