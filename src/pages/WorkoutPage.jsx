@@ -3,13 +3,12 @@
 // Muestra los ejercicios agrupados por bloque, permite registrar
 // series (reps + peso) y guarda el entrenamiento al finalizar.
 //
-// Funcionalidad de sesión parcial:
-//   - Al montar, busca un workout_log de hoy con completed=false para esta rutina.
-//     Si existe, pre-rellena los inputs con las series ya guardadas.
-//   - Al intentar salir con progreso sin finalizar, muestra un modal:
-//       * "Guardar progreso y salir" → guarda/actualiza con completed=false
-//       * "Salir sin guardar"        → navega sin guardar nada
-//   - "Finalizar entrenamiento" guarda con completed=true (sesión completa).
+// Borrador en localStorage:
+//   - Clave: "workout_draft_{routineId}"
+//   - Valor: JSON con { exercise_id: [{reps, weight}, ...] }
+//   - Se actualiza en cada cambio de input
+//   - Se carga al montar si existe (sesión interrumpida)
+//   - Se elimina al finalizar el entrenamiento
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
@@ -43,10 +42,10 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
   const [loading, setLoading]           = useState(true)
   const [saving, setSaving]             = useState(false)
   const [saved, setSaved]               = useState(false)
-  const [draftLogId, setDraftLogId]     = useState(null) // id del workout_log parcial de hoy, si existe
+  const [hasDraft, setHasDraft]         = useState(false)  // true si se recuperó un borrador al cargar
 
-  // Modal de salida: destino al que navegar si el usuario confirma
-  const [exitDestination, setExitDestination] = useState(null) // 'back' | 'finish' | null
+  // Clave de localStorage para esta rutina
+  const draftKey = `workout_draft_${routineId}`
 
   useEffect(() => { loadExercises(routineId) }, [routineId])
 
@@ -71,68 +70,50 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
       initSets[re.exercise_id] = Array.from({ length: numSets }, () => ({ reps: '', weight: '' }))
     }
 
-    // Buscar draft de hoy (completed=false) para esta rutina.
-    // Se selecciona el campo completed para verificarlo en JS también,
-    // evitando pre-rellenar si hay un log completado de hoy.
-    const today = new Date().toISOString().slice(0, 10)
-    const { data: draftLog } = await supabase
-      .from('workout_logs')
-      .select('id, completed')
-      .eq('routine_id', id)
-      .eq('logged_date', today)
-      .eq('completed', false)
-      .maybeSingle()
-
-    if (draftLog && draftLog.completed === false) {
-      // Hay un draft: cargar sus series y pre-rellenar los inputs
-      setDraftLogId(draftLog.id)
-      const { data: draftSets } = await supabase
-        .from('log_sets')
-        .select('exercise_id, set_number, reps_done, weight_done')
-        .eq('log_id', draftLog.id)
-
-      if (draftSets) {
-        for (const s of draftSets) {
-          if (!initSets[s.exercise_id]) continue
-          const idx = s.set_number - 1
-          if (initSets[s.exercise_id][idx]) {
-            initSets[s.exercise_id][idx] = {
-              reps:   s.reps_done   != null ? String(s.reps_done)   : '',
-              weight: s.weight_done != null ? String(s.weight_done) : '',
+    // Comprobar si hay un borrador guardado en localStorage para esta rutina
+    const raw = localStorage.getItem(`workout_draft_${id}`)
+    if (raw) {
+      try {
+        const draft = JSON.parse(raw)
+        // Mezclar el borrador con initSets: solo sobreescribir lo que exista en ambos
+        for (const exerciseId of Object.keys(draft)) {
+          if (!initSets[exerciseId]) continue
+          draft[exerciseId].forEach((s, idx) => {
+            if (initSets[exerciseId][idx]) {
+              initSets[exerciseId][idx] = s
             }
-          }
+          })
         }
+        setHasDraft(true)
+      } catch {
+        // JSON corrupto — ignorar el borrador
+        localStorage.removeItem(`workout_draft_${id}`)
       }
     }
 
     setCurrentSets(initSets)
 
-    // Cargar "anterior" solo de sesiones completadas (no del draft actual)
-    await loadPreviousSets(reData.map(re => re.exercise_id), draftLog?.id ?? null)
+    // Cargar "anterior": el último workout_log completado por ejercicio
+    await loadPreviousSets(reData.map(re => re.exercise_id))
     setLoading(false)
   }
 
   // Busca las series del último entrenamiento COMPLETADO por ejercicio.
-  // Excluye el draftLogId para no comparar contra el draft de hoy.
-  async function loadPreviousSets(exerciseIds, excludeLogId) {
+  async function loadPreviousSets(exerciseIds) {
     if (exerciseIds.length === 0) return
 
-    let query = supabase
+    const { data } = await supabase
       .from('log_sets')
-      .select('exercise_id, set_number, reps_done, weight_done, log_id, workout_logs(logged_date, completed)')
+      .select('exercise_id, set_number, reps_done, weight_done, log_id, workout_logs!inner(logged_date, completed)')
       .in('exercise_id', exerciseIds)
+      .eq('workout_logs.completed', true)
       .order('set_number')
 
-    const { data } = await query
     if (!data) return
 
-    // Quedarse solo con series de logs completados y que no sean el draft actual
-    const completedSets = data.filter(s =>
-      s.workout_logs?.completed === true && s.log_id !== excludeLogId
-    )
-
+    // Para cada ejercicio, quedarse solo con las series del log más reciente
     const latestLog = {}
-    for (const s of completedSets) {
+    for (const s of data) {
       const date = s.workout_logs?.logged_date || ''
       if (!latestLog[s.exercise_id] || date > latestLog[s.exercise_id].date) {
         latestLog[s.exercise_id] = { logId: s.log_id, date }
@@ -140,7 +121,7 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
     }
 
     const prev = {}
-    for (const s of completedSets) {
+    for (const s of data) {
       if (s.log_id === latestLog[s.exercise_id]?.logId) {
         if (!prev[s.exercise_id]) prev[s.exercise_id] = []
         prev[s.exercise_id].push(s)
@@ -150,31 +131,45 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
     setPreviousSets(prev)
   }
 
+  // Actualiza un campo de una serie y persiste el estado completo en localStorage
   function updateSet(exerciseId, setIndex, field, value) {
-    setCurrentSets(prev => ({
-      ...prev,
-      [exerciseId]: prev[exerciseId].map((s, i) =>
-        i === setIndex ? { ...s, [field]: value } : s
-      ),
-    }))
+    setCurrentSets(prev => {
+      const updated = {
+        ...prev,
+        [exerciseId]: prev[exerciseId].map((s, i) =>
+          i === setIndex ? { ...s, [field]: value } : s
+        ),
+      }
+      // Guardar el estado completo en localStorage tras cada cambio
+      localStorage.setItem(draftKey, JSON.stringify(updated))
+      return updated
+    })
   }
 
-  // Devuelve true si el usuario ha rellenado al menos un input
-  function hasProgress() {
-    return Object.values(currentSets).some(sets =>
-      sets.some(s => s.reps !== '' || s.weight !== '')
-    )
-  }
+  // Crea el workout_log + log_sets en Supabase y limpia el borrador
+  async function finishWorkout() {
+    setSaving(true)
 
-  // Prepara el array de series con datos para insertar/actualizar
-  function buildSetsToSave(logId) {
-    const sets = []
+    const { data: logData, error } = await supabase
+      .from('workout_logs')
+      .insert({ routine_id: routineId })
+      .select('id')
+      .single()
+
+    if (error || !logData) {
+      alert('Error al guardar. Comprueba la conexión.')
+      setSaving(false)
+      return
+    }
+
+    // Construir el array de series a insertar (solo las que tengan reps o peso)
+    const setsToInsert = []
     for (const [exerciseId, setsArr] of Object.entries(currentSets)) {
       for (let i = 0; i < setsArr.length; i++) {
         const { reps, weight } = setsArr[i]
         if (reps !== '' || weight !== '') {
-          sets.push({
-            log_id:      logId,
+          setsToInsert.push({
+            log_id:      logData.id,
             exercise_id: exerciseId,
             set_number:  i + 1,
             reps_done:   reps   !== '' ? parseInt(reps)     : null,
@@ -183,67 +178,16 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
         }
       }
     }
-    return sets
-  }
 
-  // Guarda (o actualiza) el log con el flag completed dado y navega al destino
-  async function saveAndNavigate(completed, destination) {
-    setSaving(true)
-    setExitDestination(null)
-
-    let logId = draftLogId
-
-    if (logId) {
-      // Ya existe un draft: actualizar su estado completed
-      await supabase
-        .from('workout_logs')
-        .update({ completed })
-        .eq('id', logId)
-
-      // Eliminar las series antiguas del draft y reinsertar las actuales
-      await supabase.from('log_sets').delete().eq('log_id', logId)
-    } else {
-      // No hay draft: crear el log nuevo
-      const { data: logData, error } = await supabase
-        .from('workout_logs')
-        .insert({ routine_id: routineId, completed })
-        .select('id')
-        .single()
-
-      if (error || !logData) {
-        alert('Error al guardar. Comprueba la conexión.')
-        setSaving(false)
-        return
-      }
-      logId = logData.id
-      if (!completed) setDraftLogId(logId)
-    }
-
-    const setsToInsert = buildSetsToSave(logId)
     if (setsToInsert.length > 0) {
       await supabase.from('log_sets').insert(setsToInsert)
     }
 
+    // Borrar el draft de localStorage — ya está guardado en Supabase
+    localStorage.removeItem(draftKey)
+
     setSaving(false)
-
-    if (completed) {
-      setSaved(true)
-    } else {
-      // Sesión parcial: navegar al destino
-      if (destination === 'finish') onFinish()
-      else onBack()
-    }
-  }
-
-  // Llamado por los botones ← y "Ver historial" antes de salir
-  // Si hay progreso sin guardar, muestra el modal; si no, sale directamente
-  function handleNavigate(destination) {
-    if (hasProgress()) {
-      setExitDestination(destination)  // abre el modal
-    } else {
-      if (destination === 'finish') onFinish()
-      else onBack()
-    }
+    setSaved(true)
   }
 
   // ── Pantalla de confirmación tras finalizar ──
@@ -278,14 +222,14 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
       {/* Cabecera */}
       <div className="flex items-center gap-3 mb-4">
         <button
-          onClick={() => handleNavigate('back')}
+          onClick={onBack}
           className="text-gray-400 hover:text-black text-lg leading-none"
           aria-label="Volver al inicio"
         >←</button>
         <div>
           <h1 className="text-xl font-bold">{routineName}</h1>
-          {/* Aviso visual si se está retomando un draft */}
-          {draftLogId && (
+          {/* Aviso visual si se están retomando valores guardados */}
+          {hasDraft && (
             <p className="text-xs text-orange-500 font-medium">Retomando sesión guardada</p>
           )}
         </div>
@@ -305,67 +249,11 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
       {/* Botón "Finalizar" fijo abajo */}
       <div className="fixed bottom-0 left-0 right-0 px-4 py-3 bg-white border-t border-gray-200">
         <button
-          onClick={() => saveAndNavigate(true, null)}
+          onClick={finishWorkout}
           disabled={saving}
           className="w-full bg-black text-white font-bold py-3 rounded-xl text-base disabled:opacity-50"
         >
           {saving ? 'Guardando...' : 'Finalizar entrenamiento'}
-        </button>
-      </div>
-
-      {/* Modal de salida con progreso sin finalizar */}
-      {exitDestination && (
-        <ExitModal
-          onSaveAndExit={() => saveAndNavigate(false, exitDestination)}
-          onExitWithoutSaving={() => {
-            setExitDestination(null)
-            if (exitDestination === 'finish') onFinish()
-            else onBack()
-          }}
-          onCancel={() => setExitDestination(null)}
-          saving={saving}
-        />
-      )}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-// ExitModal — modal de confirmación al salir con progreso
-// ─────────────────────────────────────────────
-function ExitModal({ onSaveAndExit, onExitWithoutSaving, onCancel, saving }) {
-  return (
-    // Fondo oscuro semitransparente
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-        <h2 className="font-bold text-lg mb-1">¿Salir del entrenamiento?</h2>
-        <p className="text-sm text-gray-500 mb-6">
-          Tienes series registradas. ¿Qué quieres hacer con el progreso?
-        </p>
-
-        {/* Guardar y salir */}
-        <button
-          onClick={onSaveAndExit}
-          disabled={saving}
-          className="w-full bg-black text-white font-medium py-3 rounded-xl mb-2 disabled:opacity-50"
-        >
-          {saving ? 'Guardando...' : 'Guardar progreso y salir'}
-        </button>
-
-        {/* Salir sin guardar */}
-        <button
-          onClick={onExitWithoutSaving}
-          className="w-full border border-gray-300 text-gray-700 font-medium py-3 rounded-xl mb-2"
-        >
-          Salir sin guardar
-        </button>
-
-        {/* Cancelar — volver al entrenamiento */}
-        <button
-          onClick={onCancel}
-          className="w-full text-gray-400 text-sm py-2"
-        >
-          Cancelar — seguir entrenando
         </button>
       </div>
     </div>
@@ -444,8 +332,8 @@ function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet }) {
 // ExerciseCard: nombre del ejercicio + contenido según tipo
 // ─────────────────────────────────────────────
 function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
-  const exercise = re.exercises
-  const isTimed  = !!re.duration_min
+  const exercise  = re.exercises
+  const isTimed   = !!re.duration_min
   const allFilled = !isTimed && currSets.length > 0 && currSets.every(s => s.reps !== '' && s.weight !== '')
 
   return (
