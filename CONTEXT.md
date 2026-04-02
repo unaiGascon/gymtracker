@@ -28,6 +28,7 @@ Sin login, sin roles, sin entrenadores. Solo una persona usando la app para regi
 | Frontend | React 19 + Vite 8 | `npm run dev` → localhost:5173 |
 | Estilos | Tailwind CSS v4 | Plugin `@tailwindcss/vite` (NO postcss). `@import "tailwindcss"` en index.css |
 | Base de datos | Supabase (PostgreSQL) | Actúa de BD y API — sin backend propio |
+| Gráficas | recharts | Instalado como dependencia |
 | Ejecución | Vercel (producción) + localhost (desarrollo) | Deploy automático desde la rama main |
 
 **Credenciales Supabase** en `.env` para desarrollo local (en `.gitignore`, nunca subir).
@@ -90,7 +91,8 @@ create table workout_logs (
   id uuid primary key default gen_random_uuid(),
   routine_id uuid references routines(id),
   logged_date date default current_date,
-  notes text
+  notes text,
+  completed boolean default true  -- siempre true; los borradores van en localStorage
 );
 ```
 
@@ -134,6 +136,7 @@ src/
     WorkoutPage.jsx      — entrenamiento activo
     HistoryPage.jsx      — historial de sesiones
     RoutinesPage.jsx     — gestión de rutinas y catálogo de ejercicios
+    ProgressPage.jsx     — progreso por ejercicio (gráfica PS + tabla)
   App.jsx                — navegación principal
   index.css              — solo @import "tailwindcss"
   main.jsx               — punto de entrada
@@ -149,11 +152,11 @@ HomePage
         └─→ (fin) → HistoryPage
         └─→ (atrás) → HomePage
 
-Barra nav superior: [Inicio] [Historial] [Rutinas]
+Barra nav superior: [Inicio] [Historial] [Rutinas] [Progreso]
   (la barra se oculta durante un entrenamiento activo)
 ```
 
-`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines'), `routineId`, `routineName`.
+`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines' | 'progress'), `routineId`, `routineName`.
 
 ---
 
@@ -166,14 +169,18 @@ Barra nav superior: [Inicio] [Historial] [Rutinas]
 - Todas las rutinas son clicables para elegir cualquiera
 
 ### WorkoutPage (`src/pages/WorkoutPage.jsx`)
-- Recibe `routineId` y `routineName` como props (no carga rutinas)
+- Recibe `routineId` y `routineName` como props
 - Carga `routine_exercises` con `exercises(*)` ordenados por `order`
 - Ejercicios con `duration_min`: muestra "X min", sin inputs
 - Ejercicios con `sets`+`reps`: inputs de reps y peso por serie
-- Columna "Anterior": dato del último `workout_log` para ese ejercicio (verde + ↑ si supera)
+- **Borrador en localStorage** (clave `workout_draft_{routineId}`):
+  - Cada cambio de input persiste el estado completo
+  - Al montar, si existe borrador se carga en los inputs con etiqueta "Retomando sesión guardada"
+  - Al finalizar, se guarda en Supabase y se elimina el borrador
+- Columna "Anterior": series del último `workout_log` completado para ese ejercicio (verde + ↑ si supera)
 - Superseries: barra lateral morada 4px, etiqueta "SUPERSERIE"
 - Ejercicios completados (todos los inputs rellenos): `opacity-40`
-- Botón "Finalizar entrenamiento" fijo abajo: crea `workout_log` + `log_sets`
+- Botón "Finalizar entrenamiento" fijo abajo: crea `workout_log` + `log_sets`, navega a pantalla de confirmación
 - Pantalla de confirmación tras guardar con "Volver al inicio" y "Ver historial"
 
 ### HistoryPage (`src/pages/HistoryPage.jsx`)
@@ -185,18 +192,39 @@ Barra nav superior: [Inicio] [Historial] [Rutinas]
 ### RoutinesPage (`src/pages/RoutinesPage.jsx`)
 Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 
-**Sección Rutinas:**
-- Lista de rutinas con nombre y número de orden
-- Crear rutina nueva (nombre + orden)
-- Detalle de rutina: ejercicios agrupados por bloque con configuración resumida
-  - Añadir ejercicio: elige bloque, ejercicio del catálogo, sets/reps/peso o duration_min
-  - Eliminar ejercicio (botón ×)
+**Sección Rutinas — lista (`RoutineList`):**
+- Clic en nombre de rutina → expande panel con "Ver ejercicios" / "Editar"
+- "Ver ejercicios" → entra al detalle de la rutina
+- "Editar" → formulario inline para cambiar nombre y orden en el ciclo
+- Botones ↑↓ para reordenar intercambiando el campo `order` con la adyacente
+- Botón × con doble confirmación para eliminar
+- Formulario al pie para crear rutina nueva (nombre + orden)
+
+**Sección Rutinas — detalle (`RoutineDetail`):**
+- Ejercicios agrupados por bloque con configuración resumida
+- Botones ↑↓ para reordenar dentro del bloque
+- Botón "Editar" por ejercicio → formulario inline (sets/reps/peso o duration_min)
+- Botón × para eliminar ejercicio
+- Botón "Unir / Separar superserie" entre ejercicios consecutivos del mismo bloque
+- Formulario "Añadir ejercicio": filtro por músculo, selector de ejercicio, bloque, sets/reps/peso o duration_min
 
 **Sección Ejercicios:**
 - Lista del catálogo con nombre, grupo muscular y descripción
 - Crear ejercicio: nombre, grupo muscular (select con 9 opciones), descripción opcional
 - Editar ejercicio existente (mismos campos)
 - Eliminar con doble confirmación (primer clic → "¿Eliminar?", segundo → borra)
+
+### ProgressPage (`src/pages/ProgressPage.jsx`)
+- Lista de ejercicios que el usuario ha entrenado al menos una vez (de `log_sets`, no del catálogo)
+- Clic en ejercicio → vista de detalle con gráfica y tabla
+- **Performance Score (PS)** por sesión:
+  - `peso_max` = máximo `weight_done` de esa sesión
+  - `mejor_serie_reps` = `reps_done` de la serie con mayor peso
+  - `volumen_total` = Σ(`reps_done` × `weight_done`) de todas las series
+  - `PS = (peso_max × mejor_serie_reps) + (volumen_total × 0.1)`
+- Gráfica de línea (recharts): eje X con fechas, eje Y con PS, tooltip al pasar por punto
+- Tabla debajo con sesiones en orden descendente: fecha, peso máx, volumen, PS
+- Requiere mínimo 2 sesiones para mostrar la gráfica
 
 ---
 
@@ -207,6 +235,8 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 - `WorkoutPage` no tiene pestaña en la nav — se entra siempre desde `HomePage`
 - La barra de nav se oculta durante el entrenamiento para no distraer
 - Grupos musculares disponibles: Pecho, Espalda, Piernas, Hombros, Bíceps, Tríceps, Cardio, Movilidad, Flexibilidad
+- Borradores de entrenamiento en `localStorage`, no en Supabase — `workout_logs.completed` siempre es `true`
+- Los inputs de series no usan placeholder con el valor anterior (evita confusión visual); el dato anterior va solo en la columna "Anterior"
 
 ---
 
@@ -234,22 +264,19 @@ create policy "public delete" on exercises for delete using (true);
 - [x] Tablas creadas en Supabase
 - [x] RLS activado con políticas de acceso público temporal
 - [x] `HomePage` — selección de rutina con "Hoy" automático
-- [x] `WorkoutPage` — registro de series completo
+- [x] `WorkoutPage` — registro de series con borrador en localStorage
 - [x] `HistoryPage` — historial con detalle de sesiones
-- [x] `RoutinesPage` — gestión de rutinas y catálogo de ejercicios
+- [x] `RoutinesPage` — gestión completa de rutinas (crear, editar, reordenar, eliminar) y catálogo de ejercicios
+- [x] `ProgressPage` — gráfica de PS por ejercicio con recharts
 - [x] Deploy en Vercel con variables de entorno configuradas
-- [ ] Poblar el catálogo de ejercicios con datos iniciales
-- [ ] Crear las primeras rutinas con sus ejercicios
-- [ ] Prueba completa de un entrenamiento de principio a fin
 
 ---
 
 ## Pendiente / Ideas para próximas sesiones
 
-- Reordenar ejercicios dentro de una rutina (drag & drop o botones ↑↓)
-- Editar nombre/orden de una rutina existente
-- Editar la configuración de un ejercicio dentro de una rutina (sets, reps, peso objetivo)
-- Soporte de superseries en el formulario de `RoutinesPage` (campo `superset_group`)
+- Poblar el catálogo de ejercicios con datos iniciales
+- Crear las primeras rutinas con sus ejercicios
+- Prueba completa de un entrenamiento de principio a fin
 - Notas en el entrenamiento (`workout_logs.notes`)
 
 ---
@@ -267,7 +294,7 @@ create policy "public delete" on exercises for delete using (true);
 - Panel del entrenador, editor de rutinas
 
 ### v4 — Progreso y métricas
-- Gráficas de evolución por ejercicio
+- Más métricas en ProgressPage (volumen semanal, récords por ejercicio)
 - Estadísticas: sesiones, adherencia, volumen total
 
 ### v5 — App móvil
@@ -280,9 +307,9 @@ create policy "public delete" on exercises for delete using (true);
 
 ```
 Lee el CONTEXT.md adjunto. GymTracker v1 está desplegado en Vercel
-y funciona en producción — React + Vite + Tailwind v4 + Supabase,
-sin backend propio. Las cuatro pantallas están implementadas:
-HomePage, WorkoutPage, HistoryPage y RoutinesPage.
+y funciona en producción — React + Vite + Tailwind v4 + Supabase + recharts,
+sin backend propio. Las cinco pantallas están implementadas:
+HomePage, WorkoutPage, HistoryPage, RoutinesPage y ProgressPage.
 RLS activado en Supabase con políticas públicas temporales (sin login aún).
 El siguiente paso es [DESCRIBIR TAREA].
 ```
