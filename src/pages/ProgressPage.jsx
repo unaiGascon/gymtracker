@@ -14,7 +14,7 @@ import {
 // ─────────────────────────────────────────────
 // Componente raíz — gestiona la navegación interna
 // ─────────────────────────────────────────────
-export default function ProgressPage() {
+export default function ProgressPage({ user }) {
   const [view, setView]         = useState('list')
   const [selected, setSelected] = useState(null)  // { id, name, muscle_group }
 

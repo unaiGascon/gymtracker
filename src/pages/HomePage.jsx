@@ -6,41 +6,46 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
+// Props:
+//   onSelectRoutine — callback al elegir una rutina
+//   (user_id no es necesario aquí — RLS filtra por usuario autenticado automáticamente)
 export default function HomePage({ onSelectRoutine }) {
   const [routines, setRoutines]   = useState([])  // ordenadas por "order"
   const [todayId, setTodayId]     = useState(null) // id de la rutina que toca hoy
   const [loading, setLoading]     = useState(true)
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    async function loadData() {
+      // 1. Cargar todas las rutinas ordenadas por su campo "order"
+      const { data: routinesData } = await supabase
+        .from('routines')
+        .select('id, name, notes, order')
+        .order('order')
 
-  async function loadData() {
-    // 1. Cargar todas las rutinas ordenadas por su campo "order"
-    const { data: routinesData } = await supabase
-      .from('routines')
-      .select('id, name, notes, order')
-      .order('order')
+      if (!routinesData?.length) {
+        setLoading(false)
+        return
+      }
 
-    if (!routinesData?.length) {
+      setRoutines(routinesData)
+
+      // 2. Buscar el último workout_log para saber qué rutina se entrenó más recientemente
+      const { data: lastLog } = await supabase
+        .from('workout_logs')
+        .select('routine_id')
+        .order('logged_date', { ascending: false })
+        .limit(1)
+        .single()
+
+      // 3. Calcular cuál es la siguiente rutina en el ciclo
+      const nextRoutine = getNextRoutine(routinesData, lastLog?.routine_id ?? null)
+      setTodayId(nextRoutine.id)
+
       setLoading(false)
-      return
     }
 
-    setRoutines(routinesData)
-
-    // 2. Buscar el último workout_log para saber qué rutina se entrenó más recientemente
-    const { data: lastLog } = await supabase
-      .from('workout_logs')
-      .select('routine_id')
-      .order('logged_date', { ascending: false })
-      .limit(1)
-      .single()
-
-    // 3. Calcular cuál es la siguiente rutina en el ciclo
-    const nextRoutine = getNextRoutine(routinesData, lastLog?.routine_id ?? null)
-    setTodayId(nextRoutine.id)
-
-    setLoading(false)
-  }
+    loadData()
+  }, [])
 
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Cargando rutinas...</div>

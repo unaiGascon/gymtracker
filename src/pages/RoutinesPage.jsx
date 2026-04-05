@@ -29,7 +29,7 @@ const MUSCLE_GROUPS = [
 // ─────────────────────────────────────────────
 // Componente raíz — gestiona sección activa y navegación interna
 // ─────────────────────────────────────────────
-export default function RoutinesPage() {
+export default function RoutinesPage({ user }) {
   const [view, setView]               = useState('routine-list')
   const [selectedRoutine, setRoutine] = useState(null)  // { id, name, order }
   const [editingExercise, setEditing] = useState(null)  // null = crear nuevo
@@ -66,6 +66,7 @@ export default function RoutinesPage() {
       {/* Contenido según la vista activa */}
       {view === 'routine-list' && (
         <RoutineList
+          user={user}
           onSelectRoutine={r => { setRoutine(r); setView('routine-detail') }}
         />
       )}
@@ -105,7 +106,7 @@ export default function RoutinesPage() {
 //   - ↑ / ↓            → reordena intercambiando el campo "order" con la adyacente
 //   - ×                 → eliminar con doble confirmación
 // ─────────────────────────────────────────────
-function RoutineList({ onSelectRoutine }) {
+function RoutineList({ user, onSelectRoutine }) {
   const [routines, setRoutines]               = useState([])
   const [loading, setLoading]                 = useState(true)
   const [newName, setNewName]                 = useState('')
@@ -119,8 +120,6 @@ function RoutineList({ onSelectRoutine }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)  // esperando segundo clic para borrar
   const [deleting, setDeleting]               = useState(null)
 
-  useEffect(() => { loadRoutines() }, [])
-
   async function loadRoutines() {
     const { data } = await supabase
       .from('routines')
@@ -130,13 +129,16 @@ function RoutineList({ onSelectRoutine }) {
     setLoading(false)
   }
 
+  useEffect(() => { loadRoutines() }, []) // eslint-disable-line react-hooks/set-state-in-effect
+
   async function createRoutine(e) {
     e.preventDefault()
     if (!newName.trim()) return
     setSaving(true)
     await supabase.from('routines').insert({
-      name:  newName.trim(),
-      order: newOrder !== '' ? parseInt(newOrder) : null,
+      name:    newName.trim(),
+      order:   newOrder !== '' ? parseInt(newOrder) : null,
+      user_id: user.id,
     })
     setNewName('')
     setNewOrder('')
@@ -398,10 +400,7 @@ function RoutineDetail({ routine, onBack }) {
     setCatalog(data || [])
   }
 
-  useEffect(() => {
-    loadExercises()
-    loadCatalog()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadExercises(); loadCatalog() }, []) // eslint-disable-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
 
   async function addExercise(e) {
     e.preventDefault()
@@ -459,8 +458,7 @@ function RoutineDetail({ routine, onBack }) {
         supabase.from('routine_exercises').update({ superset_group: null }).eq('id', reB.id),
       ])
     } else {
-      // Usar Math.random para un id corto y único — evita llamar a Date.now() que el linter marca
-      const group = `ss_${Math.random().toString(36).slice(2, 7)}`
+      const group = `ss_${crypto.randomUUID().slice(0, 8)}`
       await Promise.all([
         supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reA.id),
         supabase.from('routine_exercises').update({ superset_group: group }).eq('id', reB.id),
@@ -760,8 +758,6 @@ function ExerciseList({ onEdit, onCreate }) {
   const [deleting, setDeleting]     = useState(null)   // id del ejercicio borrándose
   const [confirmId, setConfirmId]   = useState(null)   // id pendiente de confirmar borrado
 
-  useEffect(() => { loadExercises() }, [])
-
   async function loadExercises() {
     const { data } = await supabase
       .from('exercises')
@@ -770,6 +766,8 @@ function ExerciseList({ onEdit, onCreate }) {
     setExercises(data || [])
     setLoading(false)
   }
+
+  useEffect(() => { loadExercises() }, []) // eslint-disable-line react-hooks/set-state-in-effect
 
   // Primer clic → pide confirmación; segundo clic → borra
   async function handleDelete(id) {

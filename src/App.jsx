@@ -1,14 +1,19 @@
-// Componente raíz — gestiona la navegación entre pantallas
+// Componente raíz — gestiona sesión de usuario y navegación entre pantallas
 //
-// Flujo principal: HomePage → WorkoutPage → (fin) → HistoryPage
-// Pestaña extra:   RoutinesPage (gestión de rutinas y ejercicios)
+// Flujo de autenticación:
+//   - Al montar: recupera la sesión activa de Supabase (persiste en localStorage)
+//   - onAuthStateChange: detecta login/logout en tiempo real
+//   - Sin sesión → LoginPage o RegisterPage
+//   - Con sesión → app normal con barra de navegación + botón cerrar sesión
 //
-// Estado de navegación:
-//   page        — pantalla activa: 'home' | 'workout' | 'history' | 'routines'
-//   routineId   — id de la rutina elegida en HomePage (solo durante workout)
-//   routineName — nombre para mostrarlo en WorkoutPage
+// Flujo de pantallas:
+//   HomePage → WorkoutPage → (fin) → HistoryPage
+//   Pestañas: Inicio | Historial | Rutinas | Progreso
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { supabase }    from './lib/supabase'
+import LoginPage    from './pages/LoginPage'
+import RegisterPage from './pages/RegisterPage'
 import HomePage     from './pages/HomePage'
 import WorkoutPage  from './pages/WorkoutPage'
 import HistoryPage  from './pages/HistoryPage'
@@ -16,9 +21,32 @@ import RoutinesPage from './pages/RoutinesPage'
 import ProgressPage from './pages/ProgressPage'
 
 export default function App() {
+  // null = cargando, objeto = sesión activa, false = sin sesión
+  const [session, setSession] = useState(null)
+  const [authView, setAuthView] = useState('login')  // 'login' | 'register'
+
   const [page, setPage]               = useState('home')
   const [routineId, setRoutineId]     = useState(null)
   const [routineName, setRoutineName] = useState('')
+
+  useEffect(() => {
+    // Recuperar sesión existente al montar (persiste en localStorage automáticamente)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session ?? false)
+    })
+
+    // Escuchar cambios de sesión: login, logout, refresco de token
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session ?? false)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    // onAuthStateChange setea session a false automáticamente
+  }
 
   // Llamado desde HomePage al elegir una rutina
   function goToWorkout(id, name) {
@@ -27,7 +55,26 @@ export default function App() {
     setPage('workout')
   }
 
-  // Las páginas con pestaña en la nav (workout no tiene pestaña — se entra desde home)
+  // ── Cargando sesión ──
+  if (session === null) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">Cargando...</p>
+      </div>
+    )
+  }
+
+  // ── Sin sesión: mostrar login o registro ──
+  if (session === false) {
+    if (authView === 'register') {
+      return <RegisterPage onGoToLogin={() => setAuthView('login')} />
+    }
+    return <LoginPage onGoToRegister={() => setAuthView('register')} />
+  }
+
+  // ── Con sesión: app normal ──
+  const user = session.user
+
   const NAV_TABS = [
     { id: 'home',     label: 'Inicio'    },
     { id: 'history',  label: 'Historial' },
@@ -41,7 +88,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {showNav && (
-        <nav className="bg-white border-b border-gray-200 px-4 py-3 flex gap-2">
+        <nav className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-2">
           {NAV_TABS.map(tab => (
             <button
               key={tab.id}
@@ -55,16 +102,27 @@ export default function App() {
               {tab.label}
             </button>
           ))}
+
+          {/* Spacer + botón cerrar sesión alineado a la derecha */}
+          <div className="flex-1" />
+          <button
+            onClick={handleSignOut}
+            className="text-xs text-gray-400 hover:text-black transition-colors"
+            aria-label="Cerrar sesión"
+          >
+            Salir
+          </button>
         </nav>
       )}
 
       <main className="max-w-2xl mx-auto">
         {page === 'home' && (
-          <HomePage onSelectRoutine={goToWorkout} />
+          <HomePage user={user} onSelectRoutine={goToWorkout} />
         )}
 
         {page === 'workout' && (
           <WorkoutPage
+            user={user}
             routineId={routineId}
             routineName={routineName}
             onBack={() => setPage('home')}
@@ -73,15 +131,15 @@ export default function App() {
         )}
 
         {page === 'history' && (
-          <HistoryPage onBack={() => setPage('home')} />
+          <HistoryPage user={user} onBack={() => setPage('home')} />
         )}
 
         {page === 'routines' && (
-          <RoutinesPage />
+          <RoutinesPage user={user} />
         )}
 
         {page === 'progress' && (
-          <ProgressPage />
+          <ProgressPage user={user} />
         )}
       </main>
     </div>

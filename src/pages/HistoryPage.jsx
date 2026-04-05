@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase'
 // ─────────────────────────────────────────────
 // Componente principal
 // ─────────────────────────────────────────────
-export default function HistoryPage({ onBack }) {
+export default function HistoryPage({ user, onBack }) {
   const [sessions, setSessions]       = useState([])   // workout_logs con nombre de rutina
   const [selectedId, setSelectedId]   = useState(null) // id del log abierto en detalle
   const [loading, setLoading]         = useState(true)

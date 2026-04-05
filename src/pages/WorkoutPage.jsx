@@ -35,7 +35,7 @@ const BLOCK_ORDER = ['warmup', 'main', 'cardio', 'cooldown']
 //   onFinish    — callback al ver historial tras guardar
 //   onBack      — callback para volver a HomePage
 // ─────────────────────────────────────────────
-export default function WorkoutPage({ routineId, routineName, onFinish, onBack }) {
+export default function WorkoutPage({ user, routineId, routineName, onFinish, onBack }) {
   const [exercises, setExercises]       = useState([])
   const [previousSets, setPreviousSets] = useState({})  // { exercise_id: [{set_number, reps_done, weight_done}] }
   const [currentSets, setCurrentSets]   = useState({})  // { exercise_id: [{reps:'', weight:''}] }
@@ -152,7 +152,7 @@ export default function WorkoutPage({ routineId, routineName, onFinish, onBack }
 
     const { data: logData, error } = await supabase
       .from('workout_logs')
-      .insert({ routine_id: routineId })
+      .insert({ routine_id: routineId, user_id: user.id })
       .select('id')
       .single()
 
