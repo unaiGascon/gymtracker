@@ -13,9 +13,10 @@
 
 ---
 
-## Versión actual: v1.1 — uso personal
+## Versión actual: v2 — autenticación y multiusuario
 
-Sin login, sin roles, sin entrenadores. Solo una persona usando la app para registrar sus entrenamientos.
+La base de datos ya está preparada para múltiples usuarios con RLS por `user_id`.
+Las pantallas de login y registro están pendientes de implementar.
 
 **La app está desplegada en Vercel y funciona en producción.**
 
@@ -44,11 +45,53 @@ Cliente Supabase exportado desde `src/lib/supabase.js`.
 
 ## Esquema de base de datos
 
+### `profiles`
+Perfil de cada usuario autenticado (creado automáticamente al registrarse).
+```sql
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  display_name text,
+  created_at timestamptz default now()
+);
+```
+
+### `admins`
+Usuarios con rol de administrador.
+```sql
+create table admins (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+```
+
+### `trainer_connections`
+Relación entre un entrenador y su cliente.
+```sql
+create table trainer_connections (
+  id uuid primary key default gen_random_uuid(),
+  trainer_id uuid references auth.users(id) on delete cascade,
+  client_id  uuid references auth.users(id) on delete cascade,
+  created_at timestamptz default now()
+);
+```
+
+### `trainer_notes`
+Notas del entrenador sobre un cliente.
+```sql
+create table trainer_notes (
+  id uuid primary key default gen_random_uuid(),
+  trainer_id uuid references auth.users(id) on delete cascade,
+  client_id  uuid references auth.users(id) on delete cascade,
+  content    text,
+  created_at timestamptz default now()
+);
+```
+
 ### `exercises`
 Catálogo de ejercicios. Gestionable desde la app (pantalla Rutinas → Ejercicios).
 ```sql
 create table exercises (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   muscle_group text,
   description text
@@ -60,6 +103,7 @@ Las rutinas disponibles. Tienen un campo `order` para el ciclo semanal.
 ```sql
 create table routines (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   notes text,
   "order" int,          -- orden en el ciclo (1, 2, 3...)
@@ -72,8 +116,8 @@ Qué ejercicios tiene cada rutina, en qué bloque y en qué orden.
 ```sql
 create table routine_exercises (
   id uuid primary key default gen_random_uuid(),
-  routine_id uuid references routines(id),
-  exercise_id uuid references exercises(id),
+  routine_id uuid references routines(id) on delete cascade,
+  exercise_id uuid references exercises(id) on delete cascade,
   block text not null,    -- 'warmup' | 'main' | 'cardio' | 'cooldown'
   sets int,
   reps int,
@@ -89,6 +133,7 @@ Registro de cada sesión completada.
 ```sql
 create table workout_logs (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
   routine_id uuid references routines(id),
   logged_date date default current_date,
   notes text,
@@ -101,7 +146,7 @@ Series reales registradas en cada sesión.
 ```sql
 create table log_sets (
   id uuid primary key default gen_random_uuid(),
-  log_id uuid references workout_logs(id),
+  log_id uuid references workout_logs(id) on delete cascade,
   exercise_id uuid references exercises(id),
   set_number int,
   reps_done int,
@@ -242,17 +287,27 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 
 ## Supabase — RLS (Row Level Security)
 
-RLS está **activado** en todas las tablas. Las políticas actuales son de **acceso público temporal** (para v1 sin login), que permiten leer y escribir a cualquier usuario con la anon key:
+RLS está **activado** en todas las tablas con políticas basadas en `auth.uid()`.
 
 ```sql
--- Ejemplo del patrón usado en cada tabla:
-create policy "public read"  on exercises for select using (true);
-create policy "public write" on exercises for insert with check (true);
-create policy "public update" on exercises for update using (true);
-create policy "public delete" on exercises for delete using (true);
+-- Patrón general para tablas con user_id:
+create policy "own data" on exercises
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- routine_exercises y log_sets: acceso a través de la tabla padre
+create policy "own data" on routine_exercises
+  using (exists (
+    select 1 from routines where id = routine_exercises.routine_id
+    and user_id = auth.uid()
+  ));
+
+-- trainer_connections: trainer y cliente pueden leer, solo el trainer crea
+create policy "trainer or client read" on trainer_connections
+  using (auth.uid() = trainer_id or auth.uid() = client_id);
 ```
 
-> ⚠️ Estas políticas se reemplazarán en v2 por políticas basadas en `auth.uid()` cuando se añada login.
+> La tabla `exercises` es global (compartida entre usuarios) o por usuario — confirmar al implementar auth.
 
 ---
 
@@ -261,32 +316,37 @@ create policy "public delete" on exercises for delete using (true);
 - [x] Proyecto React + Vite + Tailwind v4 inicializado
 - [x] Cliente Supabase instalado y configurado
 - [x] Proyecto Supabase creado con credenciales en `.env`
-- [x] Tablas creadas en Supabase
-- [x] RLS activado con políticas de acceso público temporal
+- [x] Tablas originales creadas (`exercises`, `routines`, `routine_exercises`, `workout_logs`, `log_sets`)
+- [x] Tablas de v2 creadas (`profiles`, `admins`, `trainer_connections`, `trainer_notes`)
+- [x] `user_id` añadido a `exercises`, `routines`, `workout_logs`
+- [x] RLS activado con políticas basadas en `auth.uid()`
 - [x] `HomePage` — selección de rutina con "Hoy" automático
 - [x] `WorkoutPage` — registro de series con borrador en localStorage
 - [x] `HistoryPage` — historial con detalle de sesiones
-- [x] `RoutinesPage` — gestión completa de rutinas (crear, editar, reordenar, eliminar) y catálogo de ejercicios
+- [x] `RoutinesPage` — gestión completa de rutinas y catálogo de ejercicios
 - [x] `ProgressPage` — gráfica de PS por ejercicio con recharts
 - [x] Deploy en Vercel con variables de entorno configuradas
+- [ ] **`LoginPage`** — autenticación con Supabase Auth ← SIGUIENTE
+- [ ] **`RegisterPage`** — registro de nuevos usuarios
+- [ ] Proteger rutas: redirigir a login si no hay sesión activa
+- [ ] Pasar `user.id` a las queries que lo necesiten
 
 ---
 
 ## Pendiente / Ideas para próximas sesiones
 
-- Poblar el catálogo de ejercicios con datos iniciales
-- Crear las primeras rutinas con sus ejercicios
-- Prueba completa de un entrenamiento de principio a fin
+- LoginPage y RegisterPage con Supabase Auth (email + contraseña)
+- Gestión de sesión en App.jsx: `supabase.auth.getSession()` al montar, listener `onAuthStateChange`
 - Notas en el entrenamiento (`workout_logs.notes`)
 
 ---
 
 ## Versiones futuras
 
-### v2 — Login y uso propio seguro
-- Supabase Auth con email/contraseña
-- Sustituir las políticas RLS públicas por políticas basadas en `auth.uid()`
-- Añadir `user_id` a `workout_logs` y `routines`
+### v2 — Login y uso propio seguro ← EN CURSO
+- Supabase Auth con email/contraseña ✓ (BD lista)
+- LoginPage y RegisterPage pendientes de implementar en la app
+- Proteger rutas con estado de sesión en App.jsx
 
 ### v3 — Entrenadores y clientes
 - Roles: admin, trainer, client
@@ -306,10 +366,11 @@ create policy "public delete" on exercises for delete using (true);
 ## Mensaje para reanudar en una nueva sesión
 
 ```
-Lee el CONTEXT.md adjunto. GymTracker v1 está desplegado en Vercel
+Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel
 y funciona en producción — React + Vite + Tailwind v4 + Supabase + recharts,
-sin backend propio. Las cinco pantallas están implementadas:
+sin backend propio. Las cinco pantallas principales están implementadas:
 HomePage, WorkoutPage, HistoryPage, RoutinesPage y ProgressPage.
-RLS activado en Supabase con políticas públicas temporales (sin login aún).
+La BD ya tiene las tablas de v2 (profiles, admins, trainer_connections,
+trainer_notes) con user_id y RLS por auth.uid() en todas las tablas.
 El siguiente paso es [DESCRIBIR TAREA].
 ```
