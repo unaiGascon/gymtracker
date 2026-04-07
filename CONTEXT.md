@@ -13,10 +13,10 @@
 
 ---
 
-## Versión actual: v2 — autenticación y multiusuario
+## Versión actual: v3 — conexiones entrenador-cliente
 
-La base de datos ya está preparada para múltiples usuarios con RLS por `user_id`.
-Las pantallas de login y registro están pendientes de implementar.
+La autenticación está completamente implementada y funcionando en producción.
+El siguiente paso es el sistema de conexiones entrenador-cliente mediante QR/enlace con token.
 
 **La app está desplegada en Vercel y funciona en producción.**
 
@@ -307,7 +307,7 @@ create policy "trainer or client read" on trainer_connections
   using (auth.uid() = trainer_id or auth.uid() = client_id);
 ```
 
-> La tabla `exercises` es global (compartida entre usuarios) o por usuario — confirmar al implementar auth.
+> La tabla `exercises` es por usuario (`user_id`), con RLS activo. Cada usuario ve y gestiona solo sus propios ejercicios.
 
 ---
 
@@ -326,32 +326,36 @@ create policy "trainer or client read" on trainer_connections
 - [x] `RoutinesPage` — gestión completa de rutinas y catálogo de ejercicios
 - [x] `ProgressPage` — gráfica de PS por ejercicio con recharts
 - [x] Deploy en Vercel con variables de entorno configuradas
-- [ ] **`LoginPage`** — autenticación con Supabase Auth ← SIGUIENTE
-- [ ] **`RegisterPage`** — registro de nuevos usuarios
-- [ ] Proteger rutas: redirigir a login si no hay sesión activa
-- [ ] Pasar `user.id` a las queries que lo necesiten
+- [x] `LoginPage` — email/contraseña + Google OAuth
+- [x] `RegisterPage` — nombre, email, contraseña + Google OAuth
+- [x] Sesión persistente con `getSession()` + `onAuthStateChange`
+- [x] Rutas protegidas: sin sesión → LoginPage
+- [x] Botón "Salir" en la nav (`supabase.auth.signOut()`)
+- [x] `user` pasado como prop a todas las páginas; RLS filtra datos automáticamente
+- [ ] **Sistema de conexiones entrenador-cliente** — QR/enlace con token ← SIGUIENTE
 
 ---
 
 ## Pendiente / Ideas para próximas sesiones
 
-- LoginPage y RegisterPage con Supabase Auth (email + contraseña)
-- Gestión de sesión en App.jsx: `supabase.auth.getSession()` al montar, listener `onAuthStateChange`
+- Sistema de conexiones entrenador-cliente con QR/enlace y token de invitación
 - Notas en el entrenamiento (`workout_logs.notes`)
 
 ---
 
 ## Versiones futuras
 
-### v2 — Login y uso propio seguro ← EN CURSO
-- Supabase Auth con email/contraseña ✓ (BD lista)
-- LoginPage y RegisterPage pendientes de implementar en la app
-- Proteger rutas con estado de sesión en App.jsx
+### v2 — Login y uso propio seguro ✓ COMPLETADO
+- Supabase Auth con email/contraseña y Google OAuth
+- LoginPage, RegisterPage y sesión persistente implementados
+- Rutas protegidas con estado de sesión en App.jsx
+- RLS activo en todas las tablas
 
-### v3 — Entrenadores y clientes
-- Roles: admin, trainer, client
-- Tabla `invitations` para registro por email
-- Panel del entrenador, editor de rutinas
+### v3 — Entrenadores y clientes ← EN CURSO
+- Sistema de invitación entrenador→cliente mediante QR o enlace con token
+- Tabla `invitations` con token único, expiración y estado
+- Panel del entrenador: lista de clientes, acceso a su historial y rutinas
+- Roles implícitos: quien crea la conexión es el entrenador
 
 ### v4 — Progreso y métricas
 - Más métricas en ProgressPage (volumen semanal, récords por ejercicio)
@@ -368,9 +372,10 @@ create policy "trainer or client read" on trainer_connections
 ```
 Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel
 y funciona en producción — React + Vite + Tailwind v4 + Supabase + recharts,
-sin backend propio. Las cinco pantallas principales están implementadas:
-HomePage, WorkoutPage, HistoryPage, RoutinesPage y ProgressPage.
-La BD ya tiene las tablas de v2 (profiles, admins, trainer_connections,
+sin backend propio. Autenticación completa: email/contraseña + Google OAuth,
+sesión persistente, RLS activo. Seis pantallas implementadas: HomePage,
+WorkoutPage, HistoryPage, RoutinesPage, ProgressPage, LoginPage y RegisterPage.
+La BD ya tiene las tablas de v3 (profiles, admins, trainer_connections,
 trainer_notes) con user_id y RLS por auth.uid() en todas las tablas.
 El siguiente paso es [DESCRIBIR TAREA].
 ```

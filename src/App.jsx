@@ -8,19 +8,28 @@
 //
 // Flujo de pantallas:
 //   HomePage → WorkoutPage → (fin) → HistoryPage
-//   Pestañas: Inicio | Historial | Rutinas | Progreso
+//   Pestañas: Inicio | Historial | Rutinas | Progreso | Conexiones
+//
+// Ruta especial: /connect?token=TOKEN → AcceptConnectionPage
+//   (pública, sin necesidad de sesión previa)
 
 import { useState, useEffect } from 'react'
-import { supabase }    from './lib/supabase'
-import LoginPage    from './pages/LoginPage'
-import RegisterPage from './pages/RegisterPage'
-import HomePage     from './pages/HomePage'
-import WorkoutPage  from './pages/WorkoutPage'
-import HistoryPage  from './pages/HistoryPage'
-import RoutinesPage from './pages/RoutinesPage'
-import ProgressPage from './pages/ProgressPage'
+import { supabase }           from './lib/supabase'
+import LoginPage              from './pages/LoginPage'
+import RegisterPage           from './pages/RegisterPage'
+import HomePage               from './pages/HomePage'
+import WorkoutPage            from './pages/WorkoutPage'
+import HistoryPage            from './pages/HistoryPage'
+import RoutinesPage           from './pages/RoutinesPage'
+import ProgressPage           from './pages/ProgressPage'
+import ConnectionsPage        from './pages/ConnectionsPage'
+import AcceptConnectionPage   from './pages/AcceptConnectionPage'
 
 export default function App() {
+  // Detectar si la URL es /connect?token=... antes de cualquier otra lógica.
+  // Si es así, mostramos AcceptConnectionPage independientemente de la sesión.
+  const connectToken = new URLSearchParams(window.location.search).get('token')
+
   // null = cargando, objeto = sesión activa, false = sin sesión
   const [session, setSession] = useState(null)
   const [authView, setAuthView] = useState('login')  // 'login' | 'register'
@@ -55,6 +64,12 @@ export default function App() {
     setPage('workout')
   }
 
+  // ── Ruta pública /connect?token=... ──
+  // Mostramos AcceptConnectionPage sin esperar sesión (ella gestiona su propio auth)
+  if (connectToken && window.location.pathname === '/connect') {
+    return <AcceptConnectionPage token={connectToken} />
+  }
+
   // ── Cargando sesión ──
   if (session === null) {
     return (
@@ -76,10 +91,11 @@ export default function App() {
   const user = session.user
 
   const NAV_TABS = [
-    { id: 'home',     label: 'Inicio'    },
-    { id: 'history',  label: 'Historial' },
-    { id: 'routines', label: 'Rutinas'   },
-    { id: 'progress', label: 'Progreso'  },
+    { id: 'home',        label: 'Inicio'     },
+    { id: 'history',     label: 'Historial'  },
+    { id: 'routines',    label: 'Rutinas'    },
+    { id: 'progress',    label: 'Progreso'   },
+    { id: 'connections', label: 'Conexiones' },
   ]
 
   // La barra de navegación se oculta durante un entrenamiento activo
@@ -88,7 +104,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {showNav && (
-        <nav className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-2">
+        <nav className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-2 overflow-x-auto">
           {NAV_TABS.map(tab => (
             <button
               key={tab.id}
@@ -140,6 +156,10 @@ export default function App() {
 
         {page === 'progress' && (
           <ProgressPage user={user} />
+        )}
+
+        {page === 'connections' && (
+          <ConnectionsPage user={user} />
         )}
       </main>
     </div>
