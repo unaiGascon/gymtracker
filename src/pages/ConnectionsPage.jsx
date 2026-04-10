@@ -801,6 +801,7 @@ async function fetchProfiles(ids) {
     .from('profiles')
     .select('id, name')
     .in('id', ids)
+  console.log('profiles resultado:', data)
   const map = {}
   data?.forEach(p => { map[p.id] = p.name })
   return map
