@@ -280,10 +280,16 @@ function InlineLogin() {
   }
 
   async function handleGoogle() {
-    // Redirigir de vuelta a esta misma URL (/connect?token=...) tras el login
+    // Supabase OAuth solo acepta redirect URLs exactas registradas en el dashboard,
+    // así que no podemos usar window.location.href (que incluye el token dinámico).
+    // Solución: guardar el token en localStorage antes del redirect; App.jsx lo
+    // recupera tras el login y redirige a /connect?token=... para completar la conexión.
+    const token = new URLSearchParams(window.location.search).get('token')
+    if (token) localStorage.setItem('pendingConnectionToken', token)
+
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.href },
+      options: { redirectTo: window.location.origin },
     })
   }
 
@@ -334,9 +340,12 @@ function InlineRegister() {
   }
 
   async function handleGoogle() {
+    const token = new URLSearchParams(window.location.search).get('token')
+    if (token) localStorage.setItem('pendingConnectionToken', token)
+
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.href },
+      options: { redirectTo: window.location.origin },
     })
   }
 

@@ -47,6 +47,17 @@ export default function App() {
     // Escuchar cambios de sesión: login, logout, refresco de token
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session ?? false)
+
+      // Si se acaba de iniciar sesión, comprobar si hay un token de conexión pendiente
+      // (guardado en localStorage antes de redirigir al login con Google OAuth)
+      if (session) {
+        const pending = localStorage.getItem('pendingConnectionToken')
+        if (pending) {
+          localStorage.removeItem('pendingConnectionToken')
+          // Redirigir a /connect?token=... para completar la conexión
+          window.location.href = `/connect?token=${pending}`
+        }
+      }
     })
 
     return () => subscription.unsubscribe()
