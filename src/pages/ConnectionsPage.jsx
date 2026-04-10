@@ -797,11 +797,11 @@ function LinkDisplay({ link, onNewLink }) {
 // Obtiene name de varios usuarios por sus IDs → { id: name }
 async function fetchProfiles(ids) {
   if (!ids.length) return {}
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('profiles')
     .select('id, name')
     .in('id', ids)
-  console.log('profiles resultado:', data)
+  console.log('profiles resultado:', data, 'error:', error)
   const map = {}
   data?.forEach(p => { map[p.id] = p.name })
   return map
