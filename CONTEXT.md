@@ -13,10 +13,10 @@
 
 ---
 
-## Versión actual: v3 — conexiones entrenador-cliente
+## Versión actual: v5 — perfil de usuario y modo entrenador
 
-La autenticación está completamente implementada y funcionando en producción.
-El siguiente paso es el sistema de conexiones entrenador-cliente mediante QR/enlace con token.
+Las conexiones entrenador-cliente están completamente implementadas y funcionando en producción.
+El siguiente paso es la Fase 4: funcionalidades del entrenador.
 
 **La app está desplegada en Vercel y funciona en producción.**
 
@@ -51,6 +51,8 @@ Perfil de cada usuario autenticado (creado automáticamente al registrarse).
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
+  name text,
+  is_trainer boolean default false,  -- activa la sección "Soy entrenador" en Conexiones
   created_at timestamptz default now()
 );
 ```
@@ -94,7 +96,8 @@ create table exercises (
   user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   muscle_group text,
-  description text
+  description text,
+  created_by uuid references auth.users(id)  -- null = ejercicio del sistema; uuid = creado por ese usuario
 );
 ```
 
@@ -175,16 +178,22 @@ Ejercicios con `sets`+`reps` muestran inputs de reps y peso.
 ```
 src/
   lib/
-    supabase.js          — cliente Supabase (importar en páginas)
+    supabase.js                — cliente Supabase (importar en páginas)
   pages/
-    HomePage.jsx         — pantalla de inicio, elige rutina
-    WorkoutPage.jsx      — entrenamiento activo
-    HistoryPage.jsx      — historial de sesiones
-    RoutinesPage.jsx     — gestión de rutinas y catálogo de ejercicios
-    ProgressPage.jsx     — progreso por ejercicio (gráfica PS + tabla)
-  App.jsx                — navegación principal
-  index.css              — solo @import "tailwindcss"
-  main.jsx               — punto de entrada
+    HomePage.jsx               — pantalla de inicio, elige rutina
+    WorkoutPage.jsx            — entrenamiento activo
+    HistoryPage.jsx            — historial de sesiones
+    RoutinesPage.jsx           — gestión de rutinas y catálogo de ejercicios
+    ProgressPage.jsx           — progreso por ejercicio (gráfica PS + tabla)
+    LoginPage.jsx              — email/contraseña + Google OAuth
+    RegisterPage.jsx           — nombre, email, contraseña + Google OAuth
+    ConnectionsPage.jsx        — gestión de conexiones entrenador-cliente
+    AcceptConnectionPage.jsx   — página pública /connect?token=... para aceptar invitaciones
+    ProfilePage.jsx            — perfil del usuario: nombre, email, toggle is_trainer, cerrar sesión
+  App.jsx                      — navegación principal + detección de ruta /connect
+  index.css                    — solo @import "tailwindcss"
+  main.jsx                     — punto de entrada
+vercel.json                    — rewrite /* → /index.html para SPA routing
 ```
 
 ---
@@ -192,16 +201,20 @@ src/
 ## Flujo de navegación
 
 ```
+/connect?token=...  →  AcceptConnectionPage (pública, sin sesión requerida)
+
 HomePage
   └─→ WorkoutPage (recibe routineId + routineName como props)
         └─→ (fin) → HistoryPage
         └─→ (atrás) → HomePage
 
-Barra nav superior: [Inicio] [Historial] [Rutinas] [Progreso]
-  (la barra se oculta durante un entrenamiento activo)
+Barra nav superior: [Inicio] [Historial] [Rutinas] [Progreso] [Conexiones] [Perfil]
+  (la barra se oculta durante un entrenamiento activo; scrollable en móvil)
+  (el botón "Salir" se quitó de la nav — ahora está dentro de ProfilePage)
 ```
 
-`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines' | 'progress'), `routineId`, `routineName`.
+`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines' | 'progress' | 'connections' | 'profile'), `routineId`, `routineName`.
+Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 
 ---
 
@@ -225,7 +238,8 @@ Barra nav superior: [Inicio] [Historial] [Rutinas] [Progreso]
 - Columna "Anterior": series del último `workout_log` completado para ese ejercicio (verde + ↑ si supera)
 - Superseries: barra lateral morada 4px, etiqueta "SUPERSERIE"
 - Ejercicios completados (todos los inputs rellenos): `opacity-40`
-- Botón "Finalizar entrenamiento" fijo abajo: crea `workout_log` + `log_sets`, navega a pantalla de confirmación
+- Botón "Finalizar entrenamiento" fijo abajo: abre modal de confirmación
+- **Modal de confirmación** (`ConfirmFinishModal`): muestra ejercicios completados y series registradas; "Sí, finalizar" guarda, "Cancelar" vuelve al entrenamiento
 - Pantalla de confirmación tras guardar con "Volver al inicio" y "Ver historial"
 
 ### HistoryPage (`src/pages/HistoryPage.jsx`)
@@ -253,11 +267,19 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 - Botón "Unir / Separar superserie" entre ejercicios consecutivos del mismo bloque
 - Formulario "Añadir ejercicio": filtro por músculo, selector de ejercicio, bloque, sets/reps/peso o duration_min
 
-**Sección Ejercicios:**
+**Sección Ejercicios (`ExerciseList`):**
 - Lista del catálogo con nombre, grupo muscular y descripción
-- Crear ejercicio: nombre, grupo muscular (select con 9 opciones), descripción opcional
-- Editar ejercicio existente (mismos campos)
+- Ejercicios propios (`created_by = user.id`): fondo morado suave + badge "Mío"
+- Ejercicios del sistema (`created_by = null`): fondo blanco + badge "Sistema"
+- Filtro pills "Todos" / "Solo míos" sobre la lista
+- Botones Editar/Eliminar solo visibles en ejercicios propios
 - Eliminar con doble confirmación (primer clic → "¿Eliminar?", segundo → borra)
+- Crear ejercicio: nombre, grupo muscular (select con 9 opciones), descripción opcional; guarda `created_by = user.id`
+- Editar ejercicio existente (mismos campos, sin cambiar `created_by`)
+
+**Catálogo en RoutineDetail (al añadir ejercicio):**
+- Filtro por grupo muscular (select)
+- Toggle pills "Todos" / "Solo míos" que filtra por `created_by = user.id`
 
 ### ProgressPage (`src/pages/ProgressPage.jsx`)
 - Lista de ejercicios que el usuario ha entrenado al menos una vez (de `log_sets`, no del catálogo)
@@ -271,17 +293,47 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 - Tabla debajo con sesiones en orden descendente: fecha, peso máx, volumen, PS
 - Requiere mínimo 2 sesiones para mostrar la gráfica
 
+### ConnectionsPage (`src/pages/ConnectionsPage.jsx`)
+Carga `is_trainer` del perfil al montar:
+- `is_trainer = false` → muestra solo "Soy cliente" sin pestañas
+- `is_trainer = true` → muestra pestañas "Soy cliente" / "Soy entrenador"
+
+**Soy cliente:**
+- Genera token `client_invites_trainer` en `trainer_connections`
+- Muestra QR + enlace copiable (`https://gymtracker-ecru.vercel.app/connect?token=...`)
+- Si ya existe un enlace pendiente sin aceptar, lo reutiliza
+- Lista de entrenadores conectados (`active=true`) con opción de revocar
+
+**Soy entrenador** (solo visible si `is_trainer = true`):
+- Genera token `trainer_invites_client` en `trainer_connections`
+- Misma lógica de QR/enlace
+- Lista de clientes conectados; clic en cliente → vista de historial del cliente
+- La vista de historial requiere policy RLS adicional (ver sección RLS)
+
+### ProfilePage (`src/pages/ProfilePage.jsx`)
+- Avatar con inicial del nombre, nombre completo y email
+- Toggle de interruptor para "Modo entrenador" — lee y escribe `profiles.is_trainer`
+- Botón "Cerrar sesión" (antes estaba en la barra de nav)
+
+### AcceptConnectionPage (`src/pages/AcceptConnectionPage.jsx`)
+Página pública en `/connect?token=TOKEN`. Gestiona su propia sesión internamente.
+- Sin token válido → "Enlace no válido"
+- Con `client_id` y `trainer_id` ya rellenos → "Enlace ya usado"
+- Sin sesión → formulario inline login/registro con Google OAuth (redirectTo preserva el token)
+- Con sesión → muestra quién invita, botón "Aceptar" rellena el campo vacío y pone `active=true`
+
 ---
 
 ## Decisiones de diseño tomadas
 
-- Navegación sin react-router: estado `page` en `App.jsx`
-- Navegación interna en `RoutinesPage` con estado `view` local
+- Navegación sin react-router: estado `page` en `App.jsx`; excepción: `/connect` detectado con `URLSearchParams`
+- Navegación interna en `RoutinesPage` y `ConnectionsPage` con estado `view`/`tab` local
 - `WorkoutPage` no tiene pestaña en la nav — se entra siempre desde `HomePage`
-- La barra de nav se oculta durante el entrenamiento para no distraer
+- La barra de nav se oculta durante el entrenamiento para no distraer; es `overflow-x-auto` para móvil
 - Grupos musculares disponibles: Pecho, Espalda, Piernas, Hombros, Bíceps, Tríceps, Cardio, Movilidad, Flexibilidad
 - Borradores de entrenamiento en `localStorage`, no en Supabase — `workout_logs.completed` siempre es `true`
 - Los inputs de series no usan placeholder con el valor anterior (evita confusión visual); el dato anterior va solo en la columna "Anterior"
+- Tokens de conexión: hex de 32 caracteres generado con `crypto.getRandomValues` en el cliente
 
 ---
 
@@ -305,6 +357,15 @@ create policy "own data" on routine_exercises
 -- trainer_connections: trainer y cliente pueden leer, solo el trainer crea
 create policy "trainer or client read" on trainer_connections
   using (auth.uid() = trainer_id or auth.uid() = client_id);
+
+-- Para que el entrenador pueda leer workout_logs de su cliente (pendiente de aplicar):
+create policy "trainer can read client logs" on workout_logs
+  using (exists (
+    select 1 from trainer_connections
+    where trainer_id = auth.uid()
+      and client_id = workout_logs.user_id
+      and active = true
+  ));
 ```
 
 > La tabla `exercises` es por usuario (`user_id`), con RLS activo. Cada usuario ve y gestiona solo sus propios ejercicios.
@@ -332,13 +393,24 @@ create policy "trainer or client read" on trainer_connections
 - [x] Rutas protegidas: sin sesión → LoginPage
 - [x] Botón "Salir" en la nav (`supabase.auth.signOut()`)
 - [x] `user` pasado como prop a todas las páginas; RLS filtra datos automáticamente
-- [ ] **Sistema de conexiones entrenador-cliente** — QR/enlace con token ← SIGUIENTE
+- [x] `ConnectionsPage` — dos flujos (cliente invita entrenador / entrenador invita cliente)
+- [x] `AcceptConnectionPage` — página pública `/connect?token=...` con login/registro inline
+- [x] QR generado con `qrcode.react`, enlace copiable, reutiliza tokens pendientes
+- [x] `vercel.json` con rewrite para SPA routing en producción
+- [x] Nav scrollable en móvil para 6 pestañas
+- [x] `ProfilePage` — perfil con toggle is_trainer y botón cerrar sesión
+- [x] `ConnectionsPage` — oculta sección entrenador si `is_trainer = false`
+- [x] `ExerciseList` — diferenciación visual propios/sistema, filtro "Solo míos", permisos de edición
+- [x] `ExerciseForm` — guarda `created_by = user.id` al crear
+- [x] `RoutineDetail` — filtro "Solo míos" en el catálogo al añadir ejercicio
+- [x] `WorkoutPage` — modal de confirmación antes de finalizar con resumen de series
 
 ---
 
 ## Pendiente / Ideas para próximas sesiones
 
-- Sistema de conexiones entrenador-cliente con QR/enlace y token de invitación
+- Fase 4: funcionalidades del entrenador (panel de clientes, editar rutinas del cliente, notas)
+- Policy RLS para que el entrenador lea `workout_logs` de su cliente (SQL ya documentado arriba)
 - Notas en el entrenamiento (`workout_logs.notes`)
 
 ---
@@ -351,15 +423,27 @@ create policy "trainer or client read" on trainer_connections
 - Rutas protegidas con estado de sesión en App.jsx
 - RLS activo en todas las tablas
 
-### v3 — Entrenadores y clientes ← EN CURSO
-- Sistema de invitación entrenador→cliente mediante QR o enlace con token
-- Tabla `invitations` con token único, expiración y estado
-- Panel del entrenador: lista de clientes, acceso a su historial y rutinas
-- Roles implícitos: quien crea la conexión es el entrenador
+### v3 — Entrenadores y clientes ✓ COMPLETADO
+- Sistema de invitación mediante QR/enlace con token (dos flujos: cliente→entrenador y entrenador→cliente)
+- `trainer_connections` con `token`, `type`, `active`; tokens generados en cliente con Web Crypto API
+- `AcceptConnectionPage` pública con login/registro inline y Google OAuth que preserva el token
+- Gestión de conexiones activas con opción de revocar
+- Vista de historial del cliente desde el panel del entrenador
 
-### v4 — Progreso y métricas
-- Más métricas en ProgressPage (volumen semanal, récords por ejercicio)
-- Estadísticas: sesiones, adherencia, volumen total
+### v4 — Funcionalidades del entrenador ✓ COMPLETADO
+- Panel del entrenador con lista de clientes y acceso a su historial y progreso
+- Posibilidad de crear/editar rutinas para un cliente
+- Notas del entrenador por cliente (`trainer_notes`)
+- Policy RLS para leer `workout_logs` del cliente (SQL documentado)
+
+### v5 — Perfil de usuario y mejoras de UX ✓ COMPLETADO
+- ProfilePage: nombre, email, toggle "Modo entrenador" (is_trainer), cerrar sesión
+- ConnectionsPage oculta la sección de entrenador si is_trainer = false
+- Botón "Salir" movido de la nav a ProfilePage; nav queda más limpia
+- ExerciseList: diferenciación visual propios/sistema, filtro "Solo míos", permisos edición/borrado
+- ExerciseForm: guarda created_by = user.id al crear ejercicios
+- RoutineDetail: filtro "Solo míos" en el catálogo de ejercicios
+- WorkoutPage: modal de confirmación antes de finalizar con recuento de ejercicios y series
 
 ### v5 — App móvil
 - React Native con Expo
@@ -370,12 +454,11 @@ create policy "trainer or client read" on trainer_connections
 ## Mensaje para reanudar en una nueva sesión
 
 ```
-Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel
-y funciona en producción — React + Vite + Tailwind v4 + Supabase + recharts,
-sin backend propio. Autenticación completa: email/contraseña + Google OAuth,
-sesión persistente, RLS activo. Seis pantallas implementadas: HomePage,
-WorkoutPage, HistoryPage, RoutinesPage, ProgressPage, LoginPage y RegisterPage.
-La BD ya tiene las tablas de v3 (profiles, admins, trainer_connections,
-trainer_notes) con user_id y RLS por auth.uid() en todas las tablas.
-El siguiente paso es [DESCRIBIR TAREA].
+Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel y funciona
+en producción — React + Vite + Tailwind v4 + Supabase + recharts, sin backend
+propio. Autenticación completa (email/contraseña + Google OAuth), sesión
+persistente, RLS activo. Ocho pantallas: HomePage, WorkoutPage, HistoryPage,
+RoutinesPage, ProgressPage, LoginPage, RegisterPage, ConnectionsPage y
+AcceptConnectionPage. Sistema de conexiones entrenador-cliente con QR/enlace
+y token funcionando. El siguiente paso es [DESCRIBIR TAREA].
 ```
