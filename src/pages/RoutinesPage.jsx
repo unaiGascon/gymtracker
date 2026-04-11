@@ -1,13 +1,16 @@
 // Pantalla "Rutinas"
-// Contiene dos secciones accesibles por pestañas internas:
-//   - Rutinas   → lista, detalle y edición de rutinas
+// Contiene tres secciones accesibles por pestañas internas:
+//   - Rutinas    → lista, detalle y edición de rutinas propias del usuario
+//   - Plantillas → rutinas plantilla del entrenador, asignables a clientes
 //   - Ejercicios → catálogo de ejercicios (crear, editar, eliminar)
 //
 // Navegación interna (view):
-//   'routine-list'    — lista de rutinas
-//   'routine-detail'  — ejercicios de una rutina concreta
-//   'exercise-list'   — catálogo de ejercicios
-//   'exercise-edit'   — formulario crear / editar un ejercicio
+//   'routine-list'     — lista de rutinas propias
+//   'routine-detail'   — ejercicios de una rutina concreta
+//   'template-list'    — lista de plantillas del entrenador
+//   'template-detail'  — ejercicios de una plantilla (usa RoutineDetail)
+//   'exercise-list'    — catálogo de ejercicios
+//   'exercise-edit'    — formulario crear / editar un ejercicio
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
@@ -31,33 +34,45 @@ const MUSCLE_GROUPS = [
 // ─────────────────────────────────────────────
 export default function RoutinesPage({ user }) {
   const [view, setView]               = useState('routine-list')
-  const [selectedRoutine, setRoutine] = useState(null)  // { id, name, order }
+  const [selectedRoutine, setRoutine] = useState(null)  // { id, name, order, ... }
   const [editingExercise, setEditing] = useState(null)  // null = crear nuevo
 
-  // Sección activa: 'routines' | 'exercises'
-  const section = view.startsWith('exercise') ? 'exercises' : 'routines'
+  // Sección activa derivada de la vista actual
+  const section = view.startsWith('exercise')
+    ? 'exercises'
+    : view.startsWith('template')
+      ? 'templates'
+      : 'routines'
 
   function switchSection(s) {
-    setView(s === 'exercises' ? 'exercise-list' : 'routine-list')
+    if (s === 'exercises') setView('exercise-list')
+    else if (s === 'templates') setView('template-list')
+    else setView('routine-list')
   }
+
+  // Las pestañas se ocultan cuando estamos en el detalle de una rutina o plantilla
+  const showTabs = view !== 'routine-detail' && view !== 'template-detail'
 
   return (
     <div>
-      {/* Pestañas internas: Rutinas / Ejercicios */}
-      {/* Se ocultan cuando estamos en el detalle de una rutina para no confundir */}
-      {view !== 'routine-detail' && (
+      {/* Pestañas internas: Rutinas / Plantillas / Ejercicios */}
+      {showTabs && (
         <div className="flex border-b border-gray-200 bg-white px-4 pt-4 gap-4">
-          {['routines', 'exercises'].map(s => (
+          {[
+            { id: 'routines',   label: 'Rutinas'    },
+            { id: 'templates',  label: 'Plantillas' },
+            { id: 'exercises',  label: 'Ejercicios' },
+          ].map(s => (
             <button
-              key={s}
-              onClick={() => switchSection(s)}
+              key={s.id}
+              onClick={() => switchSection(s.id)}
               className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
-                section === s
+                section === s.id
                   ? 'border-gray-900 text-gray-900'
                   : 'border-transparent text-gray-400 hover:text-gray-600'
               }`}
             >
-              {s === 'routines' ? 'Rutinas' : 'Ejercicios'}
+              {s.label}
             </button>
           ))}
         </div>
@@ -75,6 +90,22 @@ export default function RoutinesPage({ user }) {
         <RoutineDetail
           routine={selectedRoutine}
           onBack={() => setView('routine-list')}
+        />
+      )}
+
+      {view === 'template-list' && (
+        <TemplateList
+          user={user}
+          onSelectTemplate={r => { setRoutine(r); setView('template-detail') }}
+        />
+      )}
+
+      {view === 'template-detail' && (
+        <RoutineDetail
+          routine={selectedRoutine}
+          onBack={() => setView('template-list')}
+          isTemplate
+          trainerId={user.id}
         />
       )}
 
@@ -354,6 +385,216 @@ function RoutineList({ user, onSelectRoutine }) {
             className="bg-black text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50"
           >
             {saving ? 'Guardando...' : 'Crear rutina'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// TemplateList — lista de plantillas del entrenador + crear nueva
+//
+// Una plantilla es una rutina con is_template = true.
+// El entrenador puede asignarla a un cliente, lo que crea una copia
+// de la rutina con user_id = cliente.id y assigned_to = cliente.id.
+// ─────────────────────────────────────────────
+function TemplateList({ user, onSelectTemplate }) {
+  const [templates, setTemplates] = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [newName, setNewName]     = useState('')
+  const [saving, setSaving]       = useState(false)
+  // id de plantilla con panel de asignación abierto
+  const [assigningId, setAssigningId] = useState(null)
+  // clientes disponibles para asignar
+  const [clients, setClients]         = useState([])
+  const [loadingClients, setLoadingClients] = useState(false)
+  const [assigning, setAssigning]     = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  async function loadTemplates() {
+    const { data } = await supabase
+      .from('routines')
+      .select('id, name, order')
+      .eq('user_id', user.id)
+      .eq('is_template', true)
+      .order('created_at', { ascending: false })
+    setTemplates(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { loadTemplates() }, []) // eslint-disable-line
+
+  async function createTemplate(e) {
+    e.preventDefault()
+    if (!newName.trim()) return
+    setSaving(true)
+    await supabase.from('routines').insert({
+      name:        newName.trim(),
+      user_id:     user.id,
+      is_template: true,
+    })
+    setNewName('')
+    setSaving(false)
+    loadTemplates()
+  }
+
+  // Carga clientes conectados y abre el panel de asignación
+  async function openAssign(templateId) {
+    setAssigningId(templateId)
+    setLoadingClients(true)
+    const { data } = await supabase
+      .from('trainer_connections')
+      .select('client_id')
+      .eq('trainer_id', user.id)
+      .eq('active', true)
+    const ids = (data || []).map(c => c.client_id).filter(Boolean)
+    if (ids.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name')
+        .in('id', ids)
+      setClients(profiles || [])
+    } else {
+      setClients([])
+    }
+    setLoadingClients(false)
+  }
+
+  // Copia la plantilla al cliente: nueva rutina + copiar routine_exercises
+  async function assignToClient(templateId, clientId) {
+    setAssigning(true)
+
+    // 1. Leer datos de la plantilla
+    const { data: tpl } = await supabase
+      .from('routines')
+      .select('name, notes')
+      .eq('id', templateId)
+      .single()
+
+    // 2. Crear nueva rutina para el cliente
+    const { data: newRoutine, error } = await supabase
+      .from('routines')
+      .insert({
+        name:        tpl.name,
+        notes:       tpl.notes,
+        user_id:     clientId,
+        assigned_to: clientId,
+        is_template: false,
+        template_id: templateId,
+      })
+      .select('id')
+      .single()
+
+    if (error || !newRoutine) { setAssigning(false); return }
+
+    // 3. Copiar los ejercicios de la plantilla a la nueva rutina
+    const { data: exercises } = await supabase
+      .from('routine_exercises')
+      .select('exercise_id, block, sets, reps, weight_kg, duration_min, order, superset_group')
+      .eq('routine_id', templateId)
+
+    if (exercises?.length > 0) {
+      await supabase.from('routine_exercises').insert(
+        exercises.map(ex => ({ ...ex, routine_id: newRoutine.id }))
+      )
+    }
+
+    setAssigning(false)
+    setAssigningId(null)
+    alert(`Rutina "${tpl.name}" asignada correctamente.`)
+  }
+
+  async function deleteTemplate(id) {
+    if (confirmDeleteId !== id) { setConfirmDeleteId(id); return }
+    setConfirmDeleteId(null)
+    await supabase.from('routines').delete().eq('id', id)
+    loadTemplates()
+  }
+
+  if (loading) return <div className="p-8 text-center text-gray-400">Cargando plantillas...</div>
+
+  return (
+    <div className="p-4">
+      {templates.length === 0 && (
+        <p className="text-sm text-gray-400 mb-6">Aún no hay plantillas. Crea la primera abajo.</p>
+      )}
+
+      <div className="flex flex-col gap-2 mb-8">
+        {templates.map(r => (
+          <div key={r.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            {/* Fila principal */}
+            <div className="flex items-center">
+              <button
+                onClick={() => onSelectTemplate(r)}
+                className="flex-1 text-left px-4 py-3"
+              >
+                <span className="font-medium text-sm">{r.name}</span>
+              </button>
+              {/* Botón asignar */}
+              <button
+                onClick={() => assigningId === r.id ? setAssigningId(null) : openAssign(r.id)}
+                className="text-xs px-3 py-3 text-gray-400 hover:text-black transition-colors"
+              >
+                Asignar
+              </button>
+              {/* Eliminar con doble confirmación */}
+              <button
+                onClick={() => deleteTemplate(r.id)}
+                className={`text-xs px-3 py-3 transition-colors ${
+                  confirmDeleteId === r.id ? 'text-red-500 font-semibold' : 'text-gray-300 hover:text-red-500'
+                }`}
+              >
+                {confirmDeleteId === r.id ? '¿Eliminar?' : '×'}
+              </button>
+            </div>
+
+            {/* Panel de asignación */}
+            {assigningId === r.id && (
+              <div className="border-t border-gray-100 px-4 py-3 bg-gray-50">
+                <p className="text-xs font-medium text-gray-500 mb-2">Asignar a cliente:</p>
+                {loadingClients ? (
+                  <p className="text-xs text-gray-400">Cargando clientes...</p>
+                ) : clients.length === 0 ? (
+                  <p className="text-xs text-gray-400">No tienes clientes conectados.</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    {clients.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => assignToClient(r.id, c.id)}
+                        disabled={assigning}
+                        className="text-left text-sm px-3 py-2 rounded-lg hover:bg-white border border-transparent hover:border-gray-200 transition-colors disabled:opacity-50"
+                      >
+                        {c.name || 'Sin nombre'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Formulario nueva plantilla */}
+      <div className="border border-gray-200 rounded-xl p-4 bg-white">
+        <h2 className="font-semibold text-sm mb-3">Nueva plantilla</h2>
+        <form onSubmit={createTemplate} className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Ej: Fullbody principiante"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+            required
+          />
+          <button
+            type="submit"
+            disabled={saving}
+            className="bg-black text-white rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
+          >
+            {saving ? '...' : 'Crear'}
           </button>
         </form>
       </div>

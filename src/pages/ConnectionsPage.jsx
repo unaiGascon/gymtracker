@@ -386,6 +386,7 @@ function ClientDetailView({ client, trainer, onBack }) {
         {[
           { id: 'history',  label: 'Historial' },
           { id: 'progress', label: 'Progreso'  },
+          { id: 'routines', label: 'Rutinas'   },
           { id: 'notes',    label: 'Notas'     },
         ].map(t => (
           <button
@@ -404,6 +405,7 @@ function ClientDetailView({ client, trainer, onBack }) {
 
       {tab === 'history'  && <ClientHistory  clientId={client.id} />}
       {tab === 'progress' && <ClientProgress clientId={client.id} />}
+      {tab === 'routines' && <ClientRoutines clientId={client.id} trainerId={trainer.id} />}
       {tab === 'notes'    && <ClientNotes    clientId={client.id} trainerId={trainer.id} />}
     </div>
   )
@@ -660,6 +662,134 @@ function ClientExerciseDetail({ exercise, clientId, onBack }) {
             </table>
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// ─── Sub-vista: rutinas asignadas al cliente ─────────────────────────────────
+//
+// Muestra las rutinas donde assigned_to = clientId.
+// El entrenador también puede crear una rutina nueva directamente para el cliente.
+//
+// RLS necesaria para que el entrenador pueda insertar rutinas para el cliente:
+//   create policy "trainer inserts client routines" on routines
+//     for insert with check (
+//       assigned_to is not null and exists (
+//         select 1 from trainer_connections
+//         where trainer_id = auth.uid() and client_id = assigned_to and active = true
+//       )
+//     );
+//
+//   create policy "trainer reads client routines" on routines
+//     for select using (
+//       user_id = auth.uid() or assigned_to = auth.uid() or exists (
+//         select 1 from trainer_connections
+//         where trainer_id = auth.uid() and client_id = routines.user_id and active = true
+//       )
+//     );
+
+function ClientRoutines({ clientId, trainerId }) {
+  const [routines, setRoutines]   = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [creating, setCreating]   = useState(false)
+  const [newName, setNewName]     = useState('')
+  const [saving, setSaving]       = useState(false)
+
+  useEffect(() => { loadRoutines() }, []) // eslint-disable-line
+
+  async function loadRoutines() {
+    // Cargar rutinas asignadas a este cliente
+    const { data } = await supabase
+      .from('routines')
+      .select('id, name, order, created_at')
+      .eq('assigned_to', clientId)
+      .order('created_at', { ascending: false })
+    setRoutines(data || [])
+    setLoading(false)
+  }
+
+  // Crea una rutina vacía directamente para el cliente
+  async function createRoutine(e) {
+    e.preventDefault()
+    if (!newName.trim()) return
+    setSaving(true)
+    const { error } = await supabase.from('routines').insert({
+      name:        newName.trim(),
+      user_id:     clientId,
+      assigned_to: clientId,
+      is_template: false,
+    })
+    if (!error) {
+      setNewName('')
+      setCreating(false)
+      loadRoutines()
+    }
+    setSaving(false)
+  }
+
+  async function deleteRoutine(id) {
+    await supabase.from('routines').delete().eq('id', id)
+    setRoutines(rs => rs.filter(r => r.id !== id))
+  }
+
+  if (loading) return <p className="text-sm text-gray-400">Cargando rutinas...</p>
+
+  return (
+    <div className="flex flex-col gap-3">
+      {routines.length === 0 && !creating && (
+        <p className="text-sm text-gray-400">Este cliente aún no tiene rutinas asignadas.</p>
+      )}
+
+      {/* Lista de rutinas asignadas */}
+      {routines.map(r => (
+        <div key={r.id} className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <p className="text-sm font-medium">{r.name}</p>
+          <button
+            onClick={() => deleteRoutine(r.id)}
+            className="text-xs text-gray-300 hover:text-red-500 transition-colors"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+
+      {/* Formulario nueva rutina */}
+      {creating ? (
+        <form onSubmit={createRoutine} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-3">
+          <input
+            type="text"
+            placeholder="Nombre de la rutina"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+            required
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-black text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {saving ? 'Guardando...' : 'Crear rutina'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreating(false)}
+              className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2 text-sm"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          onClick={() => setCreating(true)}
+          className="w-full border border-dashed border-gray-300 rounded-xl py-3 text-sm text-gray-400 hover:text-black hover:border-gray-400 transition-colors"
+        >
+          + Crear rutina para este cliente
+        </button>
       )}
     </div>
   )

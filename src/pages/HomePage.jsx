@@ -1,60 +1,75 @@
 // Pantalla de inicio
-// Carga las rutinas y determina cuál toca hoy según el historial:
-//   - Sin historial → la de order = 1
-//   - Con historial → la siguiente a la última entrenada (ciclo)
+// Carga las rutinas propias del usuario y las asignadas por su entrenador.
+//
+// Lógica de "Hoy":
+//   - Busca el último workout_log del usuario
+//   - La siguiente rutina en el ciclo (por campo "order") es la del día
+//   - Las rutinas asignadas por el entrenador no participan en el ciclo
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
-// Props:
-//   onSelectRoutine — callback al elegir una rutina
-//   (user_id no es necesario aquí — RLS filtra por usuario autenticado automáticamente)
-export default function HomePage({ onSelectRoutine }) {
-  const [routines, setRoutines]   = useState([])  // ordenadas por "order"
-  const [todayId, setTodayId]     = useState(null) // id de la rutina que toca hoy
-  const [loading, setLoading]     = useState(true)
+export default function HomePage({ user, onSelectRoutine }) {
+  const [routines, setRoutines]         = useState([])  // rutinas propias ordenadas por "order"
+  const [assignedRoutines, setAssigned] = useState([])  // rutinas asignadas por el entrenador
+  const [todayId, setTodayId]           = useState(null)
+  const [loading, setLoading]           = useState(true)
 
   useEffect(() => {
     async function loadData() {
-      // 1. Cargar todas las rutinas ordenadas por su campo "order"
-      const { data: routinesData } = await supabase
+      // 1. Rutinas propias (user_id = usuario actual, sin is_template)
+      const { data: own } = await supabase
         .from('routines')
         .select('id, name, notes, order')
+        .eq('user_id', user.id)
+        .neq('is_template', true)
+        .is('assigned_to', null)
         .order('order')
 
-      if (!routinesData?.length) {
+      // 2. Rutinas asignadas por el entrenador (assigned_to = usuario actual)
+      const { data: assigned } = await supabase
+        .from('routines')
+        .select('id, name, notes, order')
+        .eq('assigned_to', user.id)
+        .order('created_at', { ascending: false })
+
+      setAssigned(assigned || [])
+
+      if (!own?.length) {
         setLoading(false)
         return
       }
 
-      setRoutines(routinesData)
+      setRoutines(own)
 
-      // 2. Buscar el último workout_log para saber qué rutina se entrenó más recientemente
+      // 3. Último workout_log para calcular la rutina del día
       const { data: lastLog } = await supabase
         .from('workout_logs')
         .select('routine_id')
+        .eq('user_id', user.id)
         .order('logged_date', { ascending: false })
         .limit(1)
         .single()
 
-      // 3. Calcular cuál es la siguiente rutina en el ciclo
-      const nextRoutine = getNextRoutine(routinesData, lastLog?.routine_id ?? null)
+      const nextRoutine = getNextRoutine(own, lastLog?.routine_id ?? null)
       setTodayId(nextRoutine.id)
 
       setLoading(false)
     }
 
     loadData()
-  }, [])
+  }, [user.id])
 
   if (loading) {
     return <div className="p-8 text-center text-gray-400">Cargando rutinas...</div>
   }
 
-  if (routines.length === 0) {
+  const noContent = routines.length === 0 && assignedRoutines.length === 0
+
+  if (noContent) {
     return (
       <div className="p-8 text-center text-gray-400">
-        No hay rutinas creadas. Añade una en Supabase.
+        No hay rutinas creadas. Añade una en la pestaña Rutinas.
       </div>
     )
   }
@@ -65,6 +80,7 @@ export default function HomePage({ onSelectRoutine }) {
       <p className="text-sm text-gray-400 mb-6">Elige una rutina para empezar</p>
 
       <div className="flex flex-col gap-3">
+        {/* Rutinas propias del usuario */}
         {routines.map(routine => {
           const isToday = routine.id === todayId
           return (
@@ -86,35 +102,54 @@ export default function HomePage({ onSelectRoutine }) {
                 )}
               </div>
               {routine.notes && (
-                <p className={`text-sm mt-0.5 ${isToday ? 'text-gray-400' : 'text-gray-400'}`}>
-                  {routine.notes}
-                </p>
+                <p className="text-sm mt-0.5 text-gray-400">{routine.notes}</p>
               )}
             </button>
           )
         })}
+
+        {/* Rutinas asignadas por el entrenador */}
+        {assignedRoutines.length > 0 && (
+          <>
+            {routines.length > 0 && (
+              <p className="text-xs text-gray-400 mt-2 mb-1 font-medium">De tu entrenador</p>
+            )}
+            {assignedRoutines.map(routine => (
+              <button
+                key={routine.id}
+                onClick={() => onSelectRoutine(routine.id, routine.name)}
+                className="w-full text-left rounded-xl px-5 py-4 bg-white border border-blue-100 text-gray-800 hover:border-blue-300 hover:shadow-sm transition-all"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-base">{routine.name}</span>
+                  <span className="text-xs text-blue-500 font-medium shrink-0">
+                    De tu entrenador
+                  </span>
+                </div>
+                {routine.notes && (
+                  <p className="text-sm mt-0.5 text-gray-400">{routine.notes}</p>
+                )}
+              </button>
+            ))}
+          </>
+        )}
       </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────
-// Determina qué rutina toca a continuación
+// Determina qué rutina toca a continuación en el ciclo
 //
-// Lógica de ciclo:
-//   - Sin historial (lastRoutineId = null) → la primera (order más bajo)
+//   - Sin historial → la primera (order más bajo)
 //   - Con historial → la siguiente en la lista ordenada
-//   - Si la última fue la de mayor order → vuelve a la primera
+//   - Wrap-around al llegar al final
 // ─────────────────────────────────────────────
 function getNextRoutine(routines, lastRoutineId) {
   if (!lastRoutineId) return routines[0]
 
   const lastIndex = routines.findIndex(r => r.id === lastRoutineId)
-
-  // Si la última rutina no está en la lista (fue eliminada), volver a la primera
   if (lastIndex === -1) return routines[0]
 
-  // Índice siguiente con wrap-around al llegar al final
-  const nextIndex = (lastIndex + 1) % routines.length
-  return routines[nextIndex]
+  return routines[(lastIndex + 1) % routines.length]
 }
