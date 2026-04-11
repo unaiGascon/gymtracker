@@ -482,7 +482,6 @@ function TemplateList({ user, onSelectTemplate }) {
         user_id:     clientId,
         assigned_to: clientId,
         is_template: false,
-        template_id: templateId,
       })
       .select('id')
       .single()
