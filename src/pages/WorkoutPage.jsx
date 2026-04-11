@@ -367,7 +367,7 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
           <div className="grid grid-cols-[1.5rem_1fr_1fr_4rem] gap-2 text-xs text-gray-400 mb-1">
             <span className="text-center">#</span>
             <span className="text-center">Reps</span>
-            <span className="text-center">Peso kg</span>
+            <span className="text-center">Peso</span>
             <span className="text-center">Anterior</span>
           </div>
           {currSets.map((set, i) => (
