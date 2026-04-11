@@ -30,33 +30,57 @@ function generateToken() {
 // ─── Componente raíz ─────────────────────────────────────────────────────────
 
 export default function ConnectionsPage({ user }) {
-  const [tab, setTab] = useState('client') // 'client' | 'trainer'
+  const [tab, setTab]           = useState('client') // 'client' | 'trainer'
+  const [isTrainer, setIsTrainer] = useState(false)
+  const [loading, setLoading]   = useState(true)
+
+  // Cargar is_trainer al montar para saber qué pestañas mostrar
+  useEffect(() => {
+    async function loadProfile() {
+      const { data } = await supabase
+        .from('profiles')
+        .select('is_trainer')
+        .eq('id', user.id)
+        .single()
+      setIsTrainer(data?.is_trainer ?? false)
+      setLoading(false)
+    }
+    loadProfile()
+  }, [user.id])
+
+  if (loading) {
+    return <div className="p-8 text-center text-gray-400">Cargando...</div>
+  }
 
   return (
     <div className="p-4 max-w-xl mx-auto">
       <h2 className="text-xl font-bold mb-4">Conexiones</h2>
 
-      <div className="flex gap-2 mb-6">
-        {[
-          { id: 'client',  label: 'Soy cliente'    },
-          { id: 'trainer', label: 'Soy entrenador' },
-        ].map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-              tab === t.id
-                ? 'bg-black text-white'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Pestañas: solo se muestran si el usuario es entrenador */}
+      {isTrainer && (
+        <div className="flex gap-2 mb-6">
+          {[
+            { id: 'client',  label: 'Soy cliente'    },
+            { id: 'trainer', label: 'Soy entrenador' },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+                tab === t.id
+                  ? 'bg-black text-white'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {tab === 'client'  && <ClientSection  user={user} />}
-      {tab === 'trainer' && <TrainerSection user={user} />}
+      {/* Si no es entrenador, solo ve "Soy cliente" sin pestañas */}
+      {(!isTrainer || tab === 'client')  && <ClientSection  user={user} />}
+      {isTrainer && tab === 'trainer'    && <TrainerSection user={user} />}
     </div>
   )
 }

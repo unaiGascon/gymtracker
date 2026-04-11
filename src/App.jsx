@@ -24,6 +24,7 @@ import RoutinesPage           from './pages/RoutinesPage'
 import ProgressPage           from './pages/ProgressPage'
 import ConnectionsPage        from './pages/ConnectionsPage'
 import AcceptConnectionPage   from './pages/AcceptConnectionPage'
+import ProfilePage            from './pages/ProfilePage'
 
 export default function App() {
   // Detectar si la URL es /connect?token=... antes de cualquier otra lógica.
@@ -107,6 +108,7 @@ export default function App() {
     { id: 'routines',    label: 'Rutinas'    },
     { id: 'progress',    label: 'Progreso'   },
     { id: 'connections', label: 'Conexiones' },
+    { id: 'profile',     label: 'Perfil'     },
   ]
 
   // La barra de navegación se oculta durante un entrenamiento activo
@@ -130,15 +132,7 @@ export default function App() {
             </button>
           ))}
 
-          {/* Spacer + botón cerrar sesión alineado a la derecha */}
           <div className="flex-1" />
-          <button
-            onClick={handleSignOut}
-            className="text-xs text-gray-400 hover:text-black transition-colors"
-            aria-label="Cerrar sesión"
-          >
-            Salir
-          </button>
         </nav>
       )}
 
@@ -171,6 +165,10 @@ export default function App() {
 
         {page === 'connections' && (
           <ConnectionsPage user={user} />
+        )}
+
+        {page === 'profile' && (
+          <ProfilePage user={user} onSignOut={handleSignOut} />
         )}
       </main>
     </div>
