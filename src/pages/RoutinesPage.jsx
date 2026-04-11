@@ -36,6 +36,17 @@ export default function RoutinesPage({ user }) {
   const [view, setView]               = useState('routine-list')
   const [selectedRoutine, setRoutine] = useState(null)  // { id, name, order, ... }
   const [editingExercise, setEditing] = useState(null)  // null = crear nuevo
+  const [isTrainer, setIsTrainer]     = useState(false) // controla si se muestra la pestaña Plantillas
+
+  // Cargar is_trainer del perfil al montar
+  useEffect(() => {
+    supabase
+      .from('profiles')
+      .select('is_trainer')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => setIsTrainer(data?.is_trainer ?? false))
+  }, [user.id])
 
   // Sección activa derivada de la vista actual
   const section = view.startsWith('exercise')
@@ -53,16 +64,19 @@ export default function RoutinesPage({ user }) {
   // Las pestañas se ocultan cuando estamos en el detalle de una rutina o plantilla
   const showTabs = view !== 'routine-detail' && view !== 'template-detail'
 
+  // Pestañas disponibles según rol
+  const tabs = [
+    { id: 'routines',  label: 'Rutinas'    },
+    ...(isTrainer ? [{ id: 'templates', label: 'Plantillas' }] : []),
+    { id: 'exercises', label: 'Ejercicios' },
+  ]
+
   return (
     <div>
-      {/* Pestañas internas: Rutinas / Plantillas / Ejercicios */}
+      {/* Pestañas internas: Rutinas / [Plantillas si entrenador] / Ejercicios */}
       {showTabs && (
         <div className="flex border-b border-gray-200 bg-white px-4 pt-4 gap-4">
-          {[
-            { id: 'routines',   label: 'Rutinas'    },
-            { id: 'templates',  label: 'Plantillas' },
-            { id: 'exercises',  label: 'Ejercicios' },
-          ].map(s => (
+          {tabs.map(s => (
             <button
               key={s.id}
               onClick={() => switchSection(s.id)}
