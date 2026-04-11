@@ -12,6 +12,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { QRCodeSVG } from 'qrcode.react'
+import { RoutineDetail } from './RoutinesPage'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -689,24 +690,54 @@ function ClientExerciseDetail({ exercise, clientId, onBack }) {
 //       )
 //     );
 
-function ClientRoutines({ clientId, trainerId }) {
-  const [routines, setRoutines]   = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [creating, setCreating]   = useState(false)
-  const [newName, setNewName]     = useState('')
-  const [saving, setSaving]       = useState(false)
+// Muestra rutinas propias del cliente y las asignadas por el entrenador.
+// El entrenador puede editar cualquiera usando RoutineDetail y crear nuevas.
+function ClientRoutines({ clientId }) {
+  const [assigned, setAssigned] = useState([])  // assigned_to = clientId
+  const [own, setOwn]           = useState([])  // user_id = clientId (sin assigned_to)
+  const [loading, setLoading]   = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName]   = useState('')
+  const [saving, setSaving]     = useState(false)
+  // Rutina que se está editando con RoutineDetail (o null)
+  const [editing, setEditing]   = useState(null)
 
   useEffect(() => { loadRoutines() }, []) // eslint-disable-line
 
   async function loadRoutines() {
-    // Cargar rutinas asignadas a este cliente
-    const { data } = await supabase
+    setLoading(true)
+
+    // Rutinas asignadas explícitamente al cliente por el entrenador
+    const { data: asgn, error: e1 } = await supabase
       .from('routines')
       .select('id, name, order, created_at')
       .eq('assigned_to', clientId)
       .order('created_at', { ascending: false })
-    setRoutines(data || [])
+    if (e1) console.error('Error cargando rutinas asignadas:', e1)
+
+    // Rutinas propias del cliente (creadas por él mismo, sin assigned_to)
+    const { data: ownData, error: e2 } = await supabase
+      .from('routines')
+      .select('id, name, order, created_at')
+      .eq('user_id', clientId)
+      .is('assigned_to', null)
+      .neq('is_template', true)
+      .order('order')
+    if (e2) console.error('Error cargando rutinas propias del cliente:', e2)
+
+    setAssigned(asgn || [])
+    setOwn(ownData || [])
     setLoading(false)
+  }
+
+  // Si estamos editando una rutina, mostrar RoutineDetail a pantalla completa
+  if (editing) {
+    return (
+      <RoutineDetail
+        routine={editing}
+        onBack={() => { setEditing(null); loadRoutines() }}
+      />
+    )
   }
 
   // Crea una rutina vacía directamente para el cliente
@@ -720,7 +751,9 @@ function ClientRoutines({ clientId, trainerId }) {
       assigned_to: clientId,
       is_template: false,
     })
-    if (!error) {
+    if (error) {
+      console.error('Error al crear rutina para cliente:', error)
+    } else {
       setNewName('')
       setCreating(false)
       loadRoutines()
@@ -730,29 +763,39 @@ function ClientRoutines({ clientId, trainerId }) {
 
   async function deleteRoutine(id) {
     await supabase.from('routines').delete().eq('id', id)
-    setRoutines(rs => rs.filter(r => r.id !== id))
+    setAssigned(rs => rs.filter(r => r.id !== id))
+    setOwn(rs => rs.filter(r => r.id !== id))
   }
 
   if (loading) return <p className="text-sm text-gray-400">Cargando rutinas...</p>
 
+  const noContent = assigned.length === 0 && own.length === 0
+
   return (
     <div className="flex flex-col gap-3">
-      {routines.length === 0 && !creating && (
-        <p className="text-sm text-gray-400">Este cliente aún no tiene rutinas asignadas.</p>
+      {noContent && !creating && (
+        <p className="text-sm text-gray-400">Este cliente aún no tiene rutinas.</p>
       )}
 
-      {/* Lista de rutinas asignadas */}
-      {routines.map(r => (
-        <div key={r.id} className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <p className="text-sm font-medium">{r.name}</p>
-          <button
-            onClick={() => deleteRoutine(r.id)}
-            className="text-xs text-gray-300 hover:text-red-500 transition-colors"
-          >
-            ×
-          </button>
-        </div>
-      ))}
+      {/* Rutinas asignadas por el entrenador */}
+      {assigned.length > 0 && (
+        <>
+          <p className="text-xs font-medium text-gray-400 mt-1">Asignadas por entrenador</p>
+          {assigned.map(r => (
+            <RoutineRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => deleteRoutine(r.id)} />
+          ))}
+        </>
+      )}
+
+      {/* Rutinas propias del cliente */}
+      {own.length > 0 && (
+        <>
+          <p className="text-xs font-medium text-gray-400 mt-1">Propias del cliente</p>
+          {own.map(r => (
+            <RoutineRow key={r.id} r={r} onEdit={() => setEditing(r)} onDelete={() => deleteRoutine(r.id)} />
+          ))}
+        </>
+      )}
 
       {/* Formulario nueva rutina */}
       {creating ? (
@@ -767,18 +810,12 @@ function ClientRoutines({ clientId, trainerId }) {
             autoFocus
           />
           <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 bg-black text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50"
-            >
+            <button type="submit" disabled={saving}
+              className="flex-1 bg-black text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50">
               {saving ? 'Guardando...' : 'Crear rutina'}
             </button>
-            <button
-              type="button"
-              onClick={() => setCreating(false)}
-              className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2 text-sm"
-            >
+            <button type="button" onClick={() => setCreating(false)}
+              className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2 text-sm">
               Cancelar
             </button>
           </div>
@@ -791,6 +828,34 @@ function ClientRoutines({ clientId, trainerId }) {
           + Crear rutina para este cliente
         </button>
       )}
+    </div>
+  )
+}
+
+// Fila de rutina con botones Editar y Eliminar
+function RoutineRow({ r, onEdit, onDelete }) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    onDelete()
+  }
+
+  return (
+    <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <button onClick={onEdit} className="flex-1 text-left px-4 py-3">
+        <p className="text-sm font-medium">{r.name}</p>
+      </button>
+      <button onClick={onEdit}
+        className="text-xs px-3 py-3 text-gray-400 hover:text-black transition-colors border-l border-gray-100">
+        Editar
+      </button>
+      <button onClick={handleDelete}
+        className={`text-xs px-3 py-3 transition-colors border-l border-gray-100 ${
+          confirmDelete ? 'text-red-500 font-semibold' : 'text-gray-300 hover:text-red-500'
+        }`}>
+        {confirmDelete ? '¿Eliminar?' : '×'}
+      </button>
     </div>
   )
 }

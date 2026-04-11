@@ -27,12 +27,14 @@ export default function HomePage({ user, onSelectRoutine }) {
         .order('order')
 
       // 2. Rutinas asignadas por el entrenador (assigned_to = usuario actual)
-      const { data: assigned } = await supabase
+      const { data: assigned, error: assignedError } = await supabase
         .from('routines')
         .select('id, name, notes, order')
         .eq('assigned_to', user.id)
         .order('created_at', { ascending: false })
 
+      if (assignedError) console.error('Error cargando rutinas asignadas:', assignedError)
+      console.log('Rutinas asignadas:', assigned)
       setAssigned(assigned || [])
 
       if (!own?.length) {

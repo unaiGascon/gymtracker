@@ -410,6 +410,7 @@ function TemplateList({ user, onSelectTemplate }) {
   const [clients, setClients]         = useState([])
   const [loadingClients, setLoadingClients] = useState(false)
   const [assigning, setAssigning]     = useState(false)
+  const [assignSuccess, setAssignSuccess] = useState(null) // mensaje de éxito tras asignar
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   async function loadTemplates() {
@@ -486,23 +487,33 @@ function TemplateList({ user, onSelectTemplate }) {
       .select('id')
       .single()
 
-    if (error || !newRoutine) { setAssigning(false); return }
+    if (error || !newRoutine) {
+      console.error('Error al crear rutina para el cliente:', error)
+      setAssigning(false)
+      return
+    }
 
     // 3. Copiar los ejercicios de la plantilla a la nueva rutina
-    const { data: exercises } = await supabase
+    const { data: exercises, error: exError } = await supabase
       .from('routine_exercises')
       .select('exercise_id, block, sets, reps, weight_kg, duration_min, order, superset_group')
       .eq('routine_id', templateId)
 
+    if (exError) console.error('Error al copiar ejercicios:', exError)
+
     if (exercises?.length > 0) {
-      await supabase.from('routine_exercises').insert(
+      const { error: insertError } = await supabase.from('routine_exercises').insert(
         exercises.map(ex => ({ ...ex, routine_id: newRoutine.id }))
       )
+      if (insertError) console.error('Error al insertar ejercicios copiados:', insertError)
     }
 
+    // Mostrar nombre del cliente en el mensaje de éxito
+    const clientName = clients.find(c => c.id === clientId)?.name || 'el cliente'
     setAssigning(false)
     setAssigningId(null)
-    alert(`Rutina "${tpl.name}" asignada correctamente.`)
+    setAssignSuccess(`Plantilla "${tpl.name}" asignada correctamente a ${clientName}.`)
+    setTimeout(() => setAssignSuccess(null), 4000)
   }
 
   async function deleteTemplate(id) {
@@ -516,6 +527,13 @@ function TemplateList({ user, onSelectTemplate }) {
 
   return (
     <div className="p-4">
+      {/* Mensaje de éxito tras asignar plantilla */}
+      {assignSuccess && (
+        <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
+          {assignSuccess}
+        </div>
+      )}
+
       {templates.length === 0 && (
         <p className="text-sm text-gray-400 mb-6">Aún no hay plantillas. Crea la primera abajo.</p>
       )}
@@ -606,7 +624,7 @@ function TemplateList({ user, onSelectTemplate }) {
 // RoutineDetail — ejercicios de una rutina + añadir / eliminar /
 //                 reordenar / superseries / edición inline
 // ─────────────────────────────────────────────
-function RoutineDetail({ routine, onBack }) {
+export function RoutineDetail({ routine, onBack }) {
   const [exercises, setExercises]       = useState([])
   const [catalog, setCatalog]           = useState([])
   const [loading, setLoading]           = useState(true)
