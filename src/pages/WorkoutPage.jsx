@@ -43,6 +43,7 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   const [saving, setSaving]             = useState(false)
   const [saved, setSaved]               = useState(false)
   const [hasDraft, setHasDraft]         = useState(false)  // true si se recuperó un borrador al cargar
+  const [showConfirm, setShowConfirm]   = useState(false)
 
   // Clave de localStorage para esta rutina
   const draftKey = `workout_draft_${routineId}`
@@ -249,13 +250,24 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
       {/* Botón "Finalizar" fijo abajo */}
       <div className="fixed bottom-0 left-0 right-0 px-4 py-3 bg-white border-t border-gray-200">
         <button
-          onClick={finishWorkout}
+          onClick={() => setShowConfirm(true)}
           disabled={saving}
           className="w-full bg-black text-white font-bold py-3 rounded-xl text-base disabled:opacity-50"
         >
-          {saving ? 'Guardando...' : 'Finalizar entrenamiento'}
+          Finalizar entrenamiento
         </button>
       </div>
+
+      {/* Modal de confirmación */}
+      {showConfirm && (
+        <ConfirmFinishModal
+          currentSets={currentSets}
+          exercises={exercises}
+          saving={saving}
+          onConfirm={() => { setShowConfirm(false); finishWorkout() }}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
     </div>
   )
 }
@@ -372,6 +384,54 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
           ))}
         </>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// ConfirmFinishModal — resumen antes de guardar
+// ─────────────────────────────────────────────
+function ConfirmFinishModal({ currentSets, exercises, saving, onConfirm, onCancel }) {
+  // Contar ejercicios con al menos una serie registrada y total de series
+  let filledExercises = 0
+  let totalSets = 0
+  for (const [, sets] of Object.entries(currentSets)) {
+    const filled = sets.filter(s => s.reps !== '' || s.weight !== '')
+    if (filled.length > 0) { filledExercises++; totalSets += filled.length }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 px-4 pb-6">
+      <div className="bg-white rounded-2xl w-full max-w-sm p-5">
+        <h2 className="text-lg font-bold mb-1">¿Finalizar el entrenamiento?</h2>
+        <p className="text-sm text-gray-500 mb-4">Esto guardará el registro en tu historial.</p>
+
+        <div className="bg-gray-50 rounded-xl px-4 py-3 mb-5 flex gap-6">
+          <div className="text-center">
+            <p className="text-2xl font-bold">{filledExercises}</p>
+            <p className="text-xs text-gray-500">ejercicio{filledExercises !== 1 ? 's' : ''}</p>
+          </div>
+          <div className="w-px bg-gray-200" />
+          <div className="text-center">
+            <p className="text-2xl font-bold">{totalSets}</p>
+            <p className="text-xs text-gray-500">serie{totalSets !== 1 ? 's' : ''}</p>
+          </div>
+        </div>
+
+        <button
+          onClick={onConfirm}
+          disabled={saving}
+          className="w-full bg-black text-white font-bold py-3 rounded-xl text-sm mb-2 disabled:opacity-50"
+        >
+          {saving ? 'Guardando...' : 'Sí, finalizar'}
+        </button>
+        <button
+          onClick={onCancel}
+          className="w-full text-sm text-gray-500 py-2"
+        >
+          Cancelar
+        </button>
+      </div>
     </div>
   )
 }

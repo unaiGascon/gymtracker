@@ -88,6 +88,7 @@ export default function RoutinesPage({ user }) {
 
       {view === 'routine-detail' && (
         <RoutineDetail
+          user={user}
           routine={selectedRoutine}
           onBack={() => setView('routine-list')}
         />
@@ -102,6 +103,7 @@ export default function RoutinesPage({ user }) {
 
       {view === 'template-detail' && (
         <RoutineDetail
+          user={user}
           routine={selectedRoutine}
           onBack={() => setView('template-list')}
           isTemplate
@@ -111,6 +113,7 @@ export default function RoutinesPage({ user }) {
 
       {view === 'exercise-list' && (
         <ExerciseList
+          user={user}
           onEdit={ex => { setEditing(ex); setView('exercise-edit') }}
           onCreate={() => { setEditing(null); setView('exercise-edit') }}
         />
@@ -118,6 +121,7 @@ export default function RoutinesPage({ user }) {
 
       {view === 'exercise-edit' && (
         <ExerciseForm
+          user={user}
           exercise={editingExercise}
           onBack={() => setView('exercise-list')}
           onSaved={() => setView('exercise-list')}
@@ -623,7 +627,7 @@ function TemplateList({ user, onSelectTemplate }) {
 // RoutineDetail — ejercicios de una rutina + añadir / eliminar /
 //                 reordenar / superseries / edición inline
 // ─────────────────────────────────────────────
-export function RoutineDetail({ routine, onBack }) {
+export function RoutineDetail({ user, routine, onBack }) {
   const [exercises, setExercises]       = useState([])
   const [catalog, setCatalog]           = useState([])
   const [loading, setLoading]           = useState(true)
@@ -631,6 +635,7 @@ export function RoutineDetail({ routine, onBack }) {
     exercise_id: '', block: 'main', sets: '', reps: '', weight_kg: '', duration_min: '',
   })
   const [muscleFilter, setMuscleFilter] = useState('')   // filtra el select de ejercicios al añadir
+  const [onlyMine, setOnlyMine]         = useState(false) // filtro "Solo míos" en el catálogo
   const [adding, setAdding]             = useState(false)
   const [deleting, setDeleting]         = useState(null) // id del routine_exercise borrándose
   const [moving, setMoving]             = useState(null) // id del ejercicio moviéndose (↑↓)
@@ -653,7 +658,7 @@ export function RoutineDetail({ routine, onBack }) {
   async function loadCatalog() {
     const { data } = await supabase
       .from('exercises')
-      .select('id, name, muscle_group')
+      .select('id, name, muscle_group, created_by')
       .order('name')
     setCatalog(data || [])
   }
@@ -751,10 +756,12 @@ export function RoutineDetail({ routine, onBack }) {
     loadExercises()
   }
 
-  // Ejercicios del catálogo filtrados por grupo muscular seleccionado
-  const filteredCatalog = muscleFilter
-    ? catalog.filter(ex => ex.muscle_group === muscleFilter)
-    : catalog
+  // Ejercicios del catálogo filtrados por grupo muscular y/o "Solo míos"
+  const filteredCatalog = catalog.filter(ex => {
+    if (muscleFilter && ex.muscle_group !== muscleFilter) return false
+    if (onlyMine && user && ex.created_by !== user.id) return false
+    return true
+  })
 
   const isTimedBlock = form.block === 'cardio'
 
@@ -938,7 +945,7 @@ export function RoutineDetail({ routine, onBack }) {
             </select>
           </div>
 
-          {/* Filtro por grupo muscular — limpia el ejercicio seleccionado al cambiar */}
+          {/* Filtros del catálogo: músculo + "Solo míos" */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">Filtrar por músculo</label>
             <select
@@ -951,7 +958,27 @@ export function RoutineDetail({ routine, onBack }) {
             </select>
           </div>
 
-          {/* Select de ejercicio, filtrado por grupo muscular */}
+          {/* Toggle "Solo míos" */}
+          {user && (
+            <div className="flex gap-2">
+              {['todos', 'mios'].map(v => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => { setOnlyMine(v === 'mios'); setForm(f => ({ ...f, exercise_id: '' })) }}
+                  className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    (v === 'mios') === onlyMine
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  {v === 'todos' ? 'Todos' : 'Solo míos'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Select de ejercicio, filtrado */}
           <div>
             <label className="text-xs text-gray-500 block mb-1">Ejercicio</label>
             <select
@@ -1010,16 +1037,18 @@ export function RoutineDetail({ routine, onBack }) {
 // ─────────────────────────────────────────────
 // ExerciseList — catálogo de ejercicios con editar y eliminar
 // ─────────────────────────────────────────────
-function ExerciseList({ onEdit, onCreate }) {
+function ExerciseList({ user, onEdit, onCreate }) {
   const [exercises, setExercises]   = useState([])
   const [loading, setLoading]       = useState(true)
-  const [deleting, setDeleting]     = useState(null)   // id del ejercicio borrándose
-  const [confirmId, setConfirmId]   = useState(null)   // id pendiente de confirmar borrado
+  const [deleting, setDeleting]     = useState(null)
+  const [confirmId, setConfirmId]   = useState(null)
+  // 'all' | 'mine' — toggle de filtro
+  const [filter, setFilter]         = useState('all')
 
   async function loadExercises() {
     const { data } = await supabase
       .from('exercises')
-      .select('id, name, muscle_group, description')
+      .select('id, name, muscle_group, description, created_by')
       .order('name')
     setExercises(data || [])
     setLoading(false)
@@ -1027,12 +1056,8 @@ function ExerciseList({ onEdit, onCreate }) {
 
   useEffect(() => { loadExercises() }, []) // eslint-disable-line react-hooks/set-state-in-effect
 
-  // Primer clic → pide confirmación; segundo clic → borra
   async function handleDelete(id) {
-    if (confirmId !== id) {
-      setConfirmId(id)
-      return
-    }
+    if (confirmId !== id) { setConfirmId(id); return }
     setDeleting(id)
     setConfirmId(null)
     await supabase.from('exercises').delete().eq('id', id)
@@ -1044,9 +1069,13 @@ function ExerciseList({ onEdit, onCreate }) {
     return <div className="p-8 text-center text-gray-400">Cargando ejercicios...</div>
   }
 
+  // Aplicar filtro "Solo míos"
+  const visible = filter === 'mine'
+    ? exercises.filter(ex => ex.created_by === user?.id)
+    : exercises
+
   return (
     <div className="p-4">
-      {/* Botón crear nuevo ejercicio */}
       <button
         onClick={onCreate}
         className="w-full bg-black text-white rounded-xl py-2.5 text-sm font-medium mb-4"
@@ -1054,51 +1083,88 @@ function ExerciseList({ onEdit, onCreate }) {
         + Nuevo ejercicio
       </button>
 
-      {exercises.length === 0 && (
-        <p className="text-sm text-gray-400">El catálogo está vacío. Crea el primer ejercicio.</p>
+      {/* Pills de filtro: Todos / Solo míos */}
+      <div className="flex gap-2 mb-4">
+        {[{ id: 'all', label: 'Todos' }, { id: 'mine', label: 'Solo míos' }].map(f => (
+          <button
+            key={f.id}
+            onClick={() => setFilter(f.id)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+              filter === f.id
+                ? 'bg-gray-900 text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 && (
+        <p className="text-sm text-gray-400">
+          {filter === 'mine' ? 'Aún no has creado ningún ejercicio.' : 'El catálogo está vacío.'}
+        </p>
       )}
 
       <div className="flex flex-col gap-2">
-        {exercises.map(ex => (
-          <div
-            key={ex.id}
-            className="bg-white border border-gray-200 rounded-xl px-4 py-3"
-          >
-            <div className="flex items-start justify-between gap-2">
-              {/* Nombre y grupo muscular */}
-              <div className="min-w-0">
-                <p className="font-medium text-sm">{ex.name}</p>
-                {ex.muscle_group && (
-                  <p className="text-xs text-gray-400">{ex.muscle_group}</p>
-                )}
-                {ex.description && (
-                  <p className="text-xs text-gray-400 mt-0.5 truncate">{ex.description}</p>
-                )}
-              </div>
+        {visible.map(ex => {
+          const isOwn = user && ex.created_by === user.id
+          const isSystem = !ex.created_by
 
-              {/* Acciones: editar y eliminar */}
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => onEdit(ex)}
-                  className="text-xs text-gray-400 hover:text-black transition-colors"
-                >
-                  Editar
-                </button>
-                <button
-                  onClick={() => handleDelete(ex.id)}
-                  disabled={deleting === ex.id}
-                  className={`text-xs transition-colors disabled:opacity-30 ${
-                    confirmId === ex.id
-                      ? 'text-red-500 font-semibold'
-                      : 'text-gray-300 hover:text-red-500'
-                  }`}
-                >
-                  {confirmId === ex.id ? '¿Eliminar?' : '×'}
-                </button>
+          return (
+            <div
+              key={ex.id}
+              className={`border rounded-xl px-4 py-3 ${
+                isOwn
+                  ? 'bg-purple-50 border-purple-200'   // propio del usuario
+                  : 'bg-white border-gray-200'          // del sistema
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm">{ex.name}</p>
+                    {isOwn && (
+                      <span className="text-xs text-purple-500 font-medium">Mío</span>
+                    )}
+                    {isSystem && (
+                      <span className="text-xs text-gray-400">Sistema</span>
+                    )}
+                  </div>
+                  {ex.muscle_group && (
+                    <p className="text-xs text-gray-400">{ex.muscle_group}</p>
+                  )}
+                  {ex.description && (
+                    <p className="text-xs text-gray-400 mt-0.5 truncate">{ex.description}</p>
+                  )}
+                </div>
+
+                {/* Solo el creador puede editar/eliminar */}
+                {isOwn && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => onEdit(ex)}
+                      className="text-xs text-gray-400 hover:text-black transition-colors"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(ex.id)}
+                      disabled={deleting === ex.id}
+                      className={`text-xs transition-colors disabled:opacity-30 ${
+                        confirmId === ex.id
+                          ? 'text-red-500 font-semibold'
+                          : 'text-gray-300 hover:text-red-500'
+                      }`}
+                    >
+                      {confirmId === ex.id ? '¿Eliminar?' : '×'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -1111,7 +1177,7 @@ function ExerciseList({ onEdit, onCreate }) {
 //   onBack   — volver sin guardar
 //   onSaved  — volver tras guardar
 // ─────────────────────────────────────────────
-function ExerciseForm({ exercise, onBack, onSaved }) {
+function ExerciseForm({ user, exercise, onBack, onSaved }) {
   const isEditing = !!exercise
 
   const [form, setForm] = useState({
@@ -1135,7 +1201,7 @@ function ExerciseForm({ exercise, onBack, onSaved }) {
     if (isEditing) {
       await supabase.from('exercises').update(payload).eq('id', exercise.id)
     } else {
-      await supabase.from('exercises').insert(payload)
+      await supabase.from('exercises').insert({ ...payload, created_by: user?.id ?? null })
     }
 
     setSaving(false)
