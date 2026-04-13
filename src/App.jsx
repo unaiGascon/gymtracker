@@ -17,6 +17,10 @@
 //   Si el navegador recargó con un entrenamiento en curso, WorkoutPage guarda
 //   activeRoutineId y activeRoutineName en localStorage. Al inicializar, App
 //   lee esos valores y arranca directamente en la pantalla de entrenamiento.
+//
+// Navegación adaptativa:
+//   - Móvil (< 768px): barra inferior fija con 5 iconos
+//   - PC (≥ 768px): barra superior con todas las pestañas
 
 import { useState, useEffect } from 'react'
 import { supabase }           from './lib/supabase'
@@ -31,13 +35,32 @@ import ConnectionsPage        from './pages/ConnectionsPage'
 import AcceptConnectionPage   from './pages/AcceptConnectionPage'
 import ProfilePage            from './pages/ProfilePage'
 
+// Pestañas de la barra superior (PC) — todas las secciones
+const TOP_TABS = [
+  { id: 'home',        label: 'Inicio'      },
+  { id: 'history',     label: 'Historial'   },
+  { id: 'routines',    label: 'Rutinas'     },
+  { id: 'progress',    label: 'Progreso'    },
+  { id: 'connections', label: 'Conexiones'  },
+  { id: 'profile',     label: 'Perfil'      },
+]
+
+// Pestañas de la barra inferior (móvil) — 5 iconos principales
+const BOTTOM_TABS = [
+  { id: 'home',     label: 'Inicio',    icon: '⌂'  },
+  { id: 'history',  label: 'Historial', icon: '◷'  },
+  { id: 'routines', label: 'Rutinas',   icon: '☰'  },
+  { id: 'progress', label: 'Progreso',  icon: '↗'  },
+  { id: 'profile',  label: 'Perfil',    icon: '◯'  },
+]
+
 export default function App() {
   // Detectar si la URL es /connect?token=... antes de cualquier otra lógica.
   // Si es así, mostramos AcceptConnectionPage independientemente de la sesión.
   const connectToken = new URLSearchParams(window.location.search).get('token')
 
   // null = cargando, objeto = sesión activa, false = sin sesión
-  const [session, setSession] = useState(null)
+  const [session, setSession]   = useState(null)
   const [authView, setAuthView] = useState('login')  // 'login' | 'register'
 
   // Inicialización lazy: si había un entrenamiento activo al recargar,
@@ -68,7 +91,6 @@ export default function App() {
         const pending = localStorage.getItem('pendingConnectionToken')
         if (pending) {
           localStorage.removeItem('pendingConnectionToken')
-          // Redirigir a /connect?token=... para completar la conexión
           window.location.href = `/connect?token=${pending}`
         }
       }
@@ -79,7 +101,6 @@ export default function App() {
 
   async function handleSignOut() {
     await supabase.auth.signOut()
-    // onAuthStateChange setea session a false automáticamente
   }
 
   // Llamado desde HomePage al elegir una rutina
@@ -90,7 +111,6 @@ export default function App() {
   }
 
   // ── Ruta pública /connect?token=... ──
-  // Mostramos AcceptConnectionPage sin esperar sesión (ella gestiona su propio auth)
   if (connectToken && window.location.pathname === '/connect') {
     return <AcceptConnectionPage token={connectToken} />
   }
@@ -115,23 +135,16 @@ export default function App() {
   // ── Con sesión: app normal ──
   const user = session.user
 
-  const NAV_TABS = [
-    { id: 'home',        label: 'Inicio'     },
-    { id: 'history',     label: 'Historial'  },
-    { id: 'routines',    label: 'Rutinas'    },
-    { id: 'progress',    label: 'Progreso'   },
-    { id: 'connections', label: 'Conexiones' },
-    { id: 'profile',     label: 'Perfil'     },
-  ]
-
-  // La barra de navegación se oculta durante un entrenamiento activo
+  // Las barras de navegación se ocultan durante un entrenamiento activo
   const showNav = page !== 'workout'
 
   return (
     <div className="min-h-screen bg-gray-50">
+
+      {/* ── Barra SUPERIOR — solo PC (≥ 768px) ── */}
       {showNav && (
-        <nav className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-2 overflow-x-auto">
-          {NAV_TABS.map(tab => (
+        <nav className="hidden md:flex bg-white border-b border-gray-200 px-4 py-3 items-center gap-2 overflow-x-auto">
+          {TOP_TABS.map(tab => (
             <button
               key={tab.id}
               onClick={() => setPage(tab.id)}
@@ -144,12 +157,13 @@ export default function App() {
               {tab.label}
             </button>
           ))}
-
           <div className="flex-1" />
         </nav>
       )}
 
-      <main className="max-w-2xl mx-auto">
+      {/* Contenido principal.
+          En móvil añadimos padding inferior para que la barra inferior no tape el contenido. */}
+      <main className="max-w-2xl mx-auto pb-24 md:pb-0">
         {page === 'home' && (
           <HomePage user={user} onSelectRoutine={goToWorkout} />
         )}
@@ -184,6 +198,39 @@ export default function App() {
           <ProfilePage user={user} onSignOut={handleSignOut} />
         )}
       </main>
+
+      {/* ── Barra INFERIOR — solo móvil (< 768px) ── */}
+      {showNav && (
+        <nav
+          className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex z-50"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          {BOTTOM_TABS.map(tab => {
+            const isActive = page === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setPage(tab.id)}
+                className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5"
+              >
+                {/* Icono: fondo negro cuando está activo */}
+                <span className={`text-lg leading-none rounded-lg w-9 h-7 flex items-center justify-center ${
+                  isActive ? 'bg-gray-900 text-white' : 'text-gray-400'
+                }`}>
+                  {tab.icon}
+                </span>
+                {/* Etiqueta */}
+                <span className={`text-[10px] font-medium ${
+                  isActive ? 'text-gray-900' : 'text-gray-400'
+                }`}>
+                  {tab.label}
+                </span>
+              </button>
+            )
+          })}
+        </nav>
+      )}
+
     </div>
   )
 }
