@@ -15,6 +15,10 @@ export default function HomePage({ user, onSelectRoutine }) {
   const [todayId, setTodayId]           = useState(null)
   const [loading, setLoading]           = useState(true)
 
+  // Rutina activa guardada en localStorage (entrenamiento en curso no finalizado)
+  const activeId   = localStorage.getItem('activeRoutineId')
+  const activeName = localStorage.getItem('activeRoutineName') || 'Entrenamiento en curso'
+
   useEffect(() => {
     async function loadData() {
       // 1. Rutinas propias (user_id = usuario actual, sin is_template)
@@ -78,6 +82,20 @@ export default function HomePage({ user, onSelectRoutine }) {
 
   return (
     <div className="p-4">
+      {/* Banner de entrenamiento en curso — visible si el usuario volvió atrás sin finalizar */}
+      {activeId && (
+        <button
+          onClick={() => onSelectRoutine(activeId, activeName)}
+          className="w-full flex items-center justify-between bg-gray-900 text-white rounded-xl px-5 py-4 mb-5 shadow-md"
+        >
+          <div className="text-left">
+            <p className="text-xs font-medium text-gray-400 mb-0.5">Entrenamiento en curso</p>
+            <p className="font-semibold text-base">{activeName}</p>
+          </div>
+          <span className="text-lg">→</span>
+        </button>
+      )}
+
       <h1 className="text-2xl font-bold mb-1">¿Qué entrenamos hoy?</h1>
       <p className="text-sm text-gray-400 mb-6">Elige una rutina para empezar</p>
 

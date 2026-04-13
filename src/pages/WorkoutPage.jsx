@@ -45,8 +45,16 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   const [hasDraft, setHasDraft]         = useState(false)  // true si se recuperó un borrador al cargar
   const [showConfirm, setShowConfirm]   = useState(false)
 
-  // Clave de localStorage para esta rutina
+  // Clave de localStorage para el borrador de series de esta rutina
   const draftKey = `workout_draft_${routineId}`
+
+  // Al montar: marcar la rutina como activa para sobrevivir recargas del navegador.
+  // Al desmontar: no limpiamos — la limpieza la hace finishWorkout al guardar,
+  // así el estado persiste si el usuario pulsa "atrás" hacia la home.
+  useEffect(() => {
+    localStorage.setItem('activeRoutineId',   routineId)
+    localStorage.setItem('activeRoutineName', routineName)
+  }, [routineId, routineName])
 
   useEffect(() => { loadExercises(routineId) }, [routineId])
 
@@ -184,8 +192,10 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
       await supabase.from('log_sets').insert(setsToInsert)
     }
 
-    // Borrar el draft de localStorage — ya está guardado en Supabase
+    // Borrar el borrador y la marca de rutina activa — ya está guardado en Supabase
     localStorage.removeItem(draftKey)
+    localStorage.removeItem('activeRoutineId')
+    localStorage.removeItem('activeRoutineName')
 
     setSaving(false)
     setSaved(true)

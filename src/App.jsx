@@ -8,10 +8,15 @@
 //
 // Flujo de pantallas:
 //   HomePage → WorkoutPage → (fin) → HistoryPage
-//   Pestañas: Inicio | Historial | Rutinas | Progreso | Conexiones
+//   Pestañas: Inicio | Historial | Rutinas | Progreso | Conexiones | Perfil
 //
 // Ruta especial: /connect?token=TOKEN → AcceptConnectionPage
 //   (pública, sin necesidad de sesión previa)
+//
+// Recuperación de entrenamiento activo:
+//   Si el navegador recargó con un entrenamiento en curso, WorkoutPage guarda
+//   activeRoutineId y activeRoutineName en localStorage. Al inicializar, App
+//   lee esos valores y arranca directamente en la pantalla de entrenamiento.
 
 import { useState, useEffect } from 'react'
 import { supabase }           from './lib/supabase'
@@ -35,9 +40,17 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [authView, setAuthView] = useState('login')  // 'login' | 'register'
 
-  const [page, setPage]               = useState('home')
-  const [routineId, setRoutineId]     = useState(null)
-  const [routineName, setRoutineName] = useState('')
+  // Inicialización lazy: si había un entrenamiento activo al recargar,
+  // arrancamos directamente en WorkoutPage en lugar de HomePage.
+  const [page, setPage]               = useState(() =>
+    localStorage.getItem('activeRoutineId') ? 'workout' : 'home'
+  )
+  const [routineId, setRoutineId]     = useState(() =>
+    localStorage.getItem('activeRoutineId') || null
+  )
+  const [routineName, setRoutineName] = useState(() =>
+    localStorage.getItem('activeRoutineName') || ''
+  )
 
   useEffect(() => {
     // Recuperar sesión existente al montar (persiste en localStorage automáticamente)
