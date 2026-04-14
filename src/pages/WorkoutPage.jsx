@@ -351,12 +351,40 @@ function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet }) {
 }
 
 // ─────────────────────────────────────────────
+// Convierte una URL normal de YouTube a URL de embed.
+//   youtube.com/watch?v=ID  →  youtube.com/embed/ID
+//   youtu.be/ID             →  youtube.com/embed/ID
+// Devuelve null si no puede extraer el ID.
+// ─────────────────────────────────────────────
+function toEmbedUrl(url) {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    // Formato largo: youtube.com/watch?v=ID
+    if (u.hostname.includes('youtube.com')) {
+      const id = u.searchParams.get('v')
+      return id ? `https://www.youtube.com/embed/${id}` : null
+    }
+    // Formato corto: youtu.be/ID
+    if (u.hostname === 'youtu.be') {
+      const id = u.pathname.slice(1)
+      return id ? `https://www.youtube.com/embed/${id}` : null
+    }
+  } catch { /* URL inválida */ }
+  return null
+}
+
+// ─────────────────────────────────────────────
 // ExerciseCard: nombre del ejercicio + contenido según tipo
 // ─────────────────────────────────────────────
 function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
   const exercise  = re.exercises
   const isTimed   = !!re.duration_min
   const allFilled = !isTimed && currSets.length > 0 && currSets.every(s => s.reps !== '' && s.weight !== '')
+
+  // Toggle para mostrar/ocultar el iframe de YouTube
+  const [showVideo, setShowVideo] = useState(false)
+  const embedUrl = toEmbedUrl(exercise?.video_url)
 
   return (
     <div className={`px-3 py-3 transition-opacity ${allFilled ? 'opacity-40' : 'opacity-100'}`}>
@@ -365,7 +393,31 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
         {exercise?.muscle_group && (
           <span className="text-xs text-gray-400">{exercise.muscle_group}</span>
         )}
+        {/* Botón "▶ Ver vídeo" — solo si el ejercicio tiene URL de YouTube válida */}
+        {embedUrl && (
+          <button
+            onClick={() => setShowVideo(v => !v)}
+            className="text-xs text-red-500 font-medium hover:text-red-700 transition-colors ml-1"
+          >
+            {showVideo ? '✕ Cerrar' : '▶ Ver vídeo'}
+          </button>
+        )}
       </div>
+
+      {/* Iframe de YouTube — se monta/desmonta para detener el vídeo al cerrar */}
+      {showVideo && embedUrl && (
+        <div className="mb-3">
+          <iframe
+            src={embedUrl}
+            title="Vídeo del ejercicio"
+            width="100%"
+            height="200"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="rounded-xl border-0"
+          />
+        </div>
+      )}
 
       {isTimed ? (
         <div className="flex items-center gap-2">

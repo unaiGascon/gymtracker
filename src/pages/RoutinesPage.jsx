@@ -672,7 +672,7 @@ export function RoutineDetail({ user, routine, onBack }) {
   async function loadCatalog() {
     const { data } = await supabase
       .from('exercises')
-      .select('id, name, muscle_group, created_by')
+      .select('id, name, muscle_group, created_by, video_url')
       .order('name')
     setCatalog(data || [])
   }
@@ -1062,7 +1062,7 @@ function ExerciseList({ user, onEdit, onCreate }) {
   async function loadExercises() {
     const { data } = await supabase
       .from('exercises')
-      .select('id, name, muscle_group, description, created_by')
+      .select('id, name, muscle_group, description, created_by, video_url')
       .order('name')
     setExercises(data || [])
     setLoading(false)
@@ -1138,6 +1138,10 @@ function ExerciseList({ user, onEdit, onCreate }) {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-medium text-sm">{ex.name}</p>
+                    {/* Icono ▶ si el ejercicio tiene vídeo asociado */}
+                    {ex.video_url && (
+                      <span className="text-xs text-red-500" title="Tiene vídeo">▶</span>
+                    )}
                     {isOwn && (
                       <span className="text-xs text-purple-500 font-medium">Mío</span>
                     )}
@@ -1198,18 +1202,34 @@ function ExerciseForm({ user, exercise, onBack, onSaved }) {
     name:         exercise?.name         ?? '',
     muscle_group: exercise?.muscle_group ?? '',
     description:  exercise?.description  ?? '',
+    video_url:    exercise?.video_url    ?? '',
   })
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving]     = useState(false)
+  const [videoError, setVideoError] = useState('')
+
+  // Devuelve true si la URL es de YouTube (o está vacía)
+  function isValidYouTubeUrl(url) {
+    if (!url) return true
+    return url.includes('youtube.com') || url.includes('youtu.be')
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.name.trim()) return
+
+    // Validar URL de YouTube antes de guardar
+    if (!isValidYouTubeUrl(form.video_url)) {
+      setVideoError('La URL debe ser de YouTube (youtube.com o youtu.be)')
+      return
+    }
+    setVideoError('')
     setSaving(true)
 
     const payload = {
       name:         form.name.trim(),
       muscle_group: form.muscle_group || null,
       description:  form.description.trim() || null,
+      video_url:    form.video_url.trim() || null,
     }
 
     if (isEditing) {
@@ -1267,6 +1287,21 @@ function ExerciseForm({ user, exercise, onBack, onSaved }) {
             rows={3}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400 resize-none"
           />
+        </div>
+
+        {/* URL de YouTube — opcional */}
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Vídeo de YouTube (opcional)</label>
+          <input
+            type="url"
+            placeholder="https://youtube.com/watch?v=..."
+            value={form.video_url}
+            onChange={e => { setForm(f => ({ ...f, video_url: e.target.value })); setVideoError('') }}
+            className={`w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 ${
+              videoError ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-gray-400'
+            }`}
+          />
+          {videoError && <p className="text-xs text-red-500 mt-1">{videoError}</p>}
         </div>
 
         <button
