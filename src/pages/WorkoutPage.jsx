@@ -384,6 +384,8 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
 
   // Toggle para mostrar/ocultar el iframe de YouTube
   const [showVideo, setShowVideo] = useState(false)
+  // LOG temporal para verificar que video_url llega desde Supabase
+  console.log('ejercicio:', exercise?.name, '| video_url:', exercise?.video_url)
   const embedUrl = toEmbedUrl(exercise?.video_url)
 
   return (
