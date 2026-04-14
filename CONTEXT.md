@@ -13,7 +13,7 @@
 
 ---
 
-## Versión actual: v5 — perfil de usuario y modo entrenador
+## Versión actual: v6 — navegación adaptativa y recuperación de entrenamiento
 
 Las conexiones entrenador-cliente están completamente implementadas y funcionando en producción.
 El siguiente paso es la Fase 4: funcionalidades del entrenador.
@@ -208,13 +208,21 @@ HomePage
         └─→ (fin) → HistoryPage
         └─→ (atrás) → HomePage
 
-Barra nav superior: [Inicio] [Historial] [Rutinas] [Progreso] [Conexiones] [Perfil]
-  (la barra se oculta durante un entrenamiento activo; scrollable en móvil)
-  (el botón "Salir" se quitó de la nav — ahora está dentro de ProfilePage)
+Navegación adaptativa:
+  - PC (≥768px): barra superior [Inicio][Historial][Rutinas][Progreso][Conexiones][Perfil]
+  - Móvil (<768px): barra inferior fija [⌂ Inicio][◷ Historial][☰ Rutinas][↗ Progreso][◯ Perfil]
+  (ambas barras se ocultan durante un entrenamiento activo)
+  (el botón "Salir" está dentro de ProfilePage, no en la nav)
+  ("Conexiones" solo aparece en la barra de PC; en móvil se accede desde Perfil o añadiendo tab)
 ```
 
 `App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines' | 'progress' | 'connections' | 'profile'), `routineId`, `routineName`.
 Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
+
+**Recuperación de entrenamiento activo tras recarga:**
+- `WorkoutPage` guarda `activeRoutineId` y `activeRoutineName` en localStorage al montar; los borra al finalizar
+- `App.jsx` inicializa `page` y `routineId` con lazy initializer desde localStorage → arranca directamente en `WorkoutPage` si había entrenamiento en curso
+- `HomePage` muestra un banner negro "Entrenamiento en curso →" si existe `activeRoutineId` (para cuando el usuario volvió atrás manualmente)
 
 ---
 
@@ -225,6 +233,7 @@ Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 - Determina qué rutina toca hoy: busca el último `workout_log`, toma la rutina siguiente en el ciclo (wrap-around). Sin historial → la primera.
 - Resalta la rutina del día con fondo negro + badge "Hoy"
 - Todas las rutinas son clicables para elegir cualquiera
+- Banner "Entrenamiento en curso →" si `localStorage.activeRoutineId` existe (entrenamiento no finalizado)
 
 ### WorkoutPage (`src/pages/WorkoutPage.jsx`)
 - Recibe `routineId` y `routineName` como props
@@ -329,7 +338,9 @@ Página pública en `/connect?token=TOKEN`. Gestiona su propia sesión intername
 - Navegación sin react-router: estado `page` en `App.jsx`; excepción: `/connect` detectado con `URLSearchParams`
 - Navegación interna en `RoutinesPage` y `ConnectionsPage` con estado `view`/`tab` local
 - `WorkoutPage` no tiene pestaña en la nav — se entra siempre desde `HomePage`
-- La barra de nav se oculta durante el entrenamiento para no distraer; es `overflow-x-auto` para móvil
+- Navegación adaptativa: barra superior en PC (`hidden md:flex`), barra inferior fija en móvil (`md:hidden`) con `env(safe-area-inset-bottom)` para iPhone
+- Ambas barras se ocultan durante el entrenamiento; el contenido tiene `pb-24 md:pb-0` para no quedar tapado
+- Recuperación de entrenamiento: `activeRoutineId` + `activeRoutineName` en localStorage; App.jsx arranca en WorkoutPage si existen
 - Grupos musculares disponibles: Pecho, Espalda, Piernas, Hombros, Bíceps, Tríceps, Cardio, Movilidad, Flexibilidad
 - Borradores de entrenamiento en `localStorage`, no en Supabase — `workout_logs.completed` siempre es `true`
 - Los inputs de series no usan placeholder con el valor anterior (evita confusión visual); el dato anterior va solo en la columna "Anterior"
@@ -397,21 +408,23 @@ create policy "trainer can read client logs" on workout_logs
 - [x] `AcceptConnectionPage` — página pública `/connect?token=...` con login/registro inline
 - [x] QR generado con `qrcode.react`, enlace copiable, reutiliza tokens pendientes
 - [x] `vercel.json` con rewrite para SPA routing en producción
-- [x] Nav scrollable en móvil para 6 pestañas
 - [x] `ProfilePage` — perfil con toggle is_trainer y botón cerrar sesión
 - [x] `ConnectionsPage` — oculta sección entrenador si `is_trainer = false`
+- [x] `RoutinesPage` — oculta pestaña Plantillas si `is_trainer = false`
 - [x] `ExerciseList` — diferenciación visual propios/sistema, filtro "Solo míos", permisos de edición
 - [x] `ExerciseForm` — guarda `created_by = user.id` al crear
 - [x] `RoutineDetail` — filtro "Solo míos" en el catálogo al añadir ejercicio
 - [x] `WorkoutPage` — modal de confirmación antes de finalizar con resumen de series
+- [x] Recuperación de entrenamiento activo tras recarga del navegador (localStorage)
+- [x] Navegación adaptativa: barra inferior en móvil, barra superior en PC
 
 ---
 
 ## Pendiente / Ideas para próximas sesiones
 
-- Fase 4: funcionalidades del entrenador (panel de clientes, editar rutinas del cliente, notas)
 - Policy RLS para que el entrenador lea `workout_logs` de su cliente (SQL ya documentado arriba)
 - Notas en el entrenamiento (`workout_logs.notes`)
+- "Conexiones" accesible desde móvil (actualmente solo en barra de PC)
 
 ---
 
@@ -439,11 +452,18 @@ create policy "trainer can read client logs" on workout_logs
 ### v5 — Perfil de usuario y mejoras de UX ✓ COMPLETADO
 - ProfilePage: nombre, email, toggle "Modo entrenador" (is_trainer), cerrar sesión
 - ConnectionsPage oculta la sección de entrenador si is_trainer = false
+- RoutinesPage oculta la pestaña Plantillas si is_trainer = false
 - Botón "Salir" movido de la nav a ProfilePage; nav queda más limpia
 - ExerciseList: diferenciación visual propios/sistema, filtro "Solo míos", permisos edición/borrado
 - ExerciseForm: guarda created_by = user.id al crear ejercicios
 - RoutineDetail: filtro "Solo míos" en el catálogo de ejercicios
 - WorkoutPage: modal de confirmación antes de finalizar con recuento de ejercicios y series
+
+### v6 — Navegación adaptativa y recuperación de entrenamiento ✓ COMPLETADO
+- Barra de navegación inferior fija en móvil (<768px) con 5 iconos y safe-area para iPhone
+- Barra superior en PC (≥768px) sin cambios
+- Recuperación automática del entrenamiento activo tras recarga del navegador (localStorage)
+- Banner "Entrenamiento en curso" en HomePage cuando el usuario navega atrás sin finalizar
 
 ### v5 — App móvil
 - React Native con Expo
