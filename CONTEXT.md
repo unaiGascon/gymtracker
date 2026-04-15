@@ -13,10 +13,10 @@
 
 ---
 
-## Versión actual: v7 — registro de actividad diaria
+## Versión actual: v8 — temporizador de descanso entre series
 
-El registro de actividad diaria (pasos + actividades extra) está implementado en el frontend.
-Las tablas `daily_activity` y `activity_logs` deben crearse en Supabase para que funcione.
+Temporizador de descanso entre series implementado en WorkoutPage.
+Configurable desde ProfilePage (campo `rest_seconds` en `profiles`).
 
 **La app está desplegada en Vercel y funciona en producción.**
 
@@ -278,6 +278,12 @@ Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 - Botón "Finalizar entrenamiento" fijo abajo: abre modal de confirmación
 - **Modal de confirmación** (`ConfirmFinishModal`): muestra ejercicios completados y series registradas; "Sí, finalizar" guarda, "Cancelar" vuelve al entrenamiento
 - Pantalla de confirmación tras guardar con "Volver al inicio" y "Ver historial"
+- **Temporizador de descanso** (`RestTimer`): panel flotante negro al completar una serie
+  - Trigger: blur en input de peso con reps + peso rellenos y no es la última serie
+  - Cuenta atrás grande + barra de progreso + "Siguiente: Serie X · Ejercicio"
+  - Al llegar a 0: `navigator.vibrate([200,100,200])` + beep Web Audio API
+  - Botón "Saltar descanso" para cancelar manualmente
+  - Duración leída desde `profiles.rest_seconds` (default 90s); 0 = desactivado
 
 ### HistoryPage (`src/pages/HistoryPage.jsx`)
 - Lista de `workout_logs` con `routines(name)` y conteo de ejercicios únicos, ordenados por fecha desc
@@ -366,6 +372,7 @@ Carga `is_trainer` del perfil al montar:
 ### ProfilePage (`src/pages/ProfilePage.jsx`)
 - Avatar con inicial del nombre, nombre completo y email
 - Toggle de interruptor para "Modo entrenador" — lee y escribe `profiles.is_trainer`
+- Sección "Descanso entre series": pills rápidas (Off/60s/90s/120s/180s) + input personalizado — lee y escribe `profiles.rest_seconds`
 - Botón "Cerrar sesión" (antes estaba en la barra de nav)
 
 ### AcceptConnectionPage (`src/pages/AcceptConnectionPage.jsx`)
@@ -474,6 +481,8 @@ create policy "own data" on activity_logs
 - [x] Navegación adaptativa: barra inferior en móvil, barra superior en PC
 - [x] `ProgressPage` — pestaña "Actividad": pasos diarios + actividades extra (running, ciclismo…)
 - [x] Tablas `daily_activity` y `activity_logs` creadas en Supabase con RLS
+- [x] Temporizador de descanso entre series en `WorkoutPage` (cuenta atrás + barra + vibración + beep)
+- [x] `ProfilePage` — configuración del tiempo de descanso (pills 0/60/90/120/180s + valor personalizado)
 
 ---
 
@@ -521,6 +530,15 @@ create policy "own data" on activity_logs
 - Barra superior en PC (≥768px) sin cambios
 - Recuperación automática del entrenamiento activo tras recarga del navegador (localStorage)
 - Banner "Entrenamiento en curso" en HomePage cuando el usuario navega atrás sin finalizar
+
+### v8 — Temporizador de descanso entre series ✓ COMPLETADO
+- Al completar una serie (blur en input de peso con ambos campos rellenos), arranca cuenta atrás
+- Solo si no es la última serie del ejercicio
+- Panel flotante negro sobre el botón "Finalizar": número grande, barra de progreso, "Siguiente: Serie X · Ejercicio", botón "Saltar descanso"
+- Al llegar a 0: vibración (`navigator.vibrate`) + beep (Web Audio API, sin archivos externos)
+- Duración configurable en ProfilePage: pills 0/60/90/120/180s + input personalizado
+- Si `rest_seconds = 0`, el temporizador está desactivado sin cambios visuales
+- Campo `rest_seconds` (int, default 90) en tabla `profiles`
 
 ### v7 — Registro de actividad diaria ✓ COMPLETADO
 - Nueva pestaña "Actividad" en ProgressPage junto a "Ejercicios"

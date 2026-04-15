@@ -9,8 +9,14 @@
 //   - Se actualiza en cada cambio de input
 //   - Se carga al montar si existe (sesión interrumpida)
 //   - Se elimina al finalizar el entrenamiento
+//
+// Temporizador de descanso:
+//   - Se arranca al completar una serie (blur en el input de peso con ambos campos rellenos)
+//   - Solo si no es la última serie del ejercicio
+//   - Duración leída desde profiles.rest_seconds (default 90s)
+//   - Si rest_seconds = 0, el temporizador está desactivado
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
 const BLOCK_COLORS = {
@@ -26,6 +32,24 @@ const BLOCK_LABELS = {
   cooldown: 'Vuelta a la calma',
 }
 const BLOCK_ORDER = ['warmup', 'main', 'cardio', 'cooldown']
+
+// Genera un beep corto con Web Audio API — sin archivos externos
+function playBeep() {
+  try {
+    const ctx  = new AudioContext()
+    const osc  = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.frequency.value = 880
+    gain.gain.setValueAtTime(0.3, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.5)
+  } catch {
+    // AudioContext bloqueado por el browser (requiere interacción previa) — ignorar
+  }
+}
 
 // ─────────────────────────────────────────────
 // Componente principal
@@ -45,6 +69,11 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   const [hasDraft, setHasDraft]         = useState(false)  // true si se recuperó un borrador al cargar
   const [showConfirm, setShowConfirm]   = useState(false)
 
+  // Temporizador de descanso
+  const [restSeconds, setRestSeconds] = useState(90)   // cargado desde profiles.rest_seconds
+  const [restTimer, setRestTimer]     = useState(null) // null | { left, total, label }
+  const timerRef = useRef(null)                        // ref al setInterval para poder cancelarlo
+
   // Clave de localStorage para el borrador de series de esta rutina
   const draftKey = `workout_draft_${routineId}`
 
@@ -57,6 +86,24 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   }, [routineId, routineName])
 
   useEffect(() => { loadExercises(routineId) }, [routineId])
+
+  // Cargar rest_seconds del perfil del usuario
+  useEffect(() => {
+    async function loadRestSeconds() {
+      const { data } = await supabase
+        .from('profiles')
+        .select('rest_seconds')
+        .eq('id', user.id)
+        .single()
+      if (data?.rest_seconds != null) setRestSeconds(data.rest_seconds)
+    }
+    loadRestSeconds()
+  }, [user.id])
+
+  // Limpiar el intervalo al desmontar el componente
+  useEffect(() => {
+    return () => clearInterval(timerRef.current)
+  }, [])
 
   async function loadExercises(id) {
     setLoading(true)
@@ -155,8 +202,38 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
     })
   }
 
+  // Arranca el temporizador de descanso con el tiempo configurado en el perfil.
+  // label: texto informativo con la siguiente serie (ej: "Serie 2 · Press banca")
+  function startRest(label) {
+    if (restSeconds <= 0) return  // temporizador desactivado
+    clearInterval(timerRef.current)
+    setRestTimer({ left: restSeconds, total: restSeconds, label })
+    timerRef.current = setInterval(() => {
+      setRestTimer(prev => {
+        if (!prev) return null
+        if (prev.left <= 1) {
+          // Tiempo agotado: vibrar + beep + cerrar panel
+          clearInterval(timerRef.current)
+          playBeep()
+          navigator.vibrate?.([200, 100, 200])
+          return null
+        }
+        return { ...prev, left: prev.left - 1 }
+      })
+    }, 1000)
+  }
+
+  // Cancela el temporizador manualmente (botón "Saltar descanso")
+  function skipRest() {
+    clearInterval(timerRef.current)
+    setRestTimer(null)
+  }
+
   // Crea el workout_log + log_sets en Supabase y limpia el borrador
   async function finishWorkout() {
+    // Cancelar el temporizador si está activo
+    clearInterval(timerRef.current)
+    setRestTimer(null)
     setSaving(true)
 
     const { data: logData, error } = await supabase
@@ -254,8 +331,19 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
           previousSets={previousSets}
           currentSets={currentSets}
           onUpdateSet={updateSet}
+          onRestStart={startRest}
         />
       ))}
+
+      {/* Temporizador de descanso — panel flotante sobre el botón finalizar */}
+      {restTimer && (
+        <RestTimer
+          secondsLeft={restTimer.left}
+          total={restTimer.total}
+          label={restTimer.label}
+          onSkip={skipRest}
+        />
+      )}
 
       {/* Botón "Finalizar" fijo abajo */}
       <div className="fixed bottom-0 left-0 right-0 px-4 py-3 bg-white border-t border-gray-200">
@@ -283,9 +371,51 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
 }
 
 // ─────────────────────────────────────────────
+// RestTimer — panel flotante con cuenta atrás
+// Se muestra encima del botón "Finalizar"
+// ─────────────────────────────────────────────
+function RestTimer({ secondsLeft, total, label, onSkip }) {
+  const minutes = Math.floor(secondsLeft / 60)
+  const secs    = secondsLeft % 60
+  const pct     = (secondsLeft / total) * 100  // 100% al inicio, 0% al final
+
+  return (
+    <div className="fixed bottom-[76px] left-0 right-0 px-4 z-40">
+      <div className="bg-gray-900 text-white rounded-2xl p-5 shadow-2xl">
+        {/* Cuenta atrás con número grande */}
+        <div className="text-center mb-3">
+          <div className="text-5xl font-bold tabular-nums leading-none">
+            {minutes}:{String(secs).padStart(2, '0')}
+          </div>
+          {label && (
+            <p className="text-xs text-gray-400 mt-2">Siguiente: {label}</p>
+          )}
+        </div>
+
+        {/* Barra de progreso que se vacía de izquierda a derecha */}
+        <div className="h-1.5 bg-gray-700 rounded-full mb-4 overflow-hidden">
+          <div
+            className="h-full bg-white rounded-full transition-[width] duration-1000 ease-linear"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+
+        {/* Botón para saltar el descanso */}
+        <button
+          onClick={onSkip}
+          className="w-full text-sm text-gray-400 hover:text-white transition-colors py-1"
+        >
+          Saltar descanso →
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
 // BlockSection: cabecera coloreada + ejercicios del bloque
 // ─────────────────────────────────────────────
-function BlockSection({ block, exercises, previousSets, currentSets, onUpdateSet }) {
+function BlockSection({ block, exercises, previousSets, currentSets, onUpdateSet, onRestStart }) {
   const groups = []
   const seenSuperset = new Set()
   for (const ex of exercises) {
@@ -311,6 +441,7 @@ function BlockSection({ block, exercises, previousSets, currentSets, onUpdateSet
                 prevSets={previousSets[group[0].exercise_id] || []}
                 currSets={currentSets[group[0].exercise_id]  || []}
                 onUpdate={onUpdateSet}
+                onRestStart={onRestStart}
               />
             : <SupersetGroup
                 key={i}
@@ -318,6 +449,7 @@ function BlockSection({ block, exercises, previousSets, currentSets, onUpdateSet
                 previousSets={previousSets}
                 currentSets={currentSets}
                 onUpdateSet={onUpdateSet}
+                onRestStart={onRestStart}
               />
         )}
       </div>
@@ -328,7 +460,7 @@ function BlockSection({ block, exercises, previousSets, currentSets, onUpdateSet
 // ─────────────────────────────────────────────
 // SupersetGroup: barra morada lateral + etiqueta + ejercicios
 // ─────────────────────────────────────────────
-function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet }) {
+function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet, onRestStart }) {
   return (
     <div className="flex">
       <div className="w-1 bg-purple-500 flex-shrink-0 rounded-bl-lg" />
@@ -343,6 +475,7 @@ function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet }) {
             prevSets={previousSets[re.exercise_id] || []}
             currSets={currentSets[re.exercise_id]  || []}
             onUpdate={onUpdateSet}
+            onRestStart={onRestStart}
           />
         ))}
       </div>
@@ -377,7 +510,7 @@ function toEmbedUrl(url) {
 // ─────────────────────────────────────────────
 // ExerciseCard: nombre del ejercicio + contenido según tipo
 // ─────────────────────────────────────────────
-function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
+function ExerciseCard({ re, prevSets, currSets, onUpdate, onRestStart }) {
   const exercise  = re.exercises
   const isTimed   = !!re.duration_min
   const allFilled = !isTimed && currSets.length > 0 && currSets.every(s => s.reps !== '' && s.weight !== '')
@@ -387,6 +520,15 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
   // LOG temporal para verificar que video_url llega desde Supabase
   console.log('ejercicio:', exercise?.name, '| video_url:', exercise?.video_url)
   const embedUrl = toEmbedUrl(exercise?.video_url)
+
+  // Llamado desde SetRow al hacer blur con la serie completa (reps + peso rellenos).
+  // Si no es la última serie, arranca el temporizador de descanso.
+  function handleSetFilled(setIndex) {
+    const isLastSet = setIndex === currSets.length - 1
+    if (isLastSet) return  // no hay descanso tras la última serie
+    const nextNum = setIndex + 2  // setIndex es 0-based; siguiente serie en número legible
+    onRestStart?.(`Serie ${nextNum} · ${exercise?.name ?? ''}`)
+  }
 
   return (
     <div className={`px-3 py-3 transition-opacity ${allFilled ? 'opacity-40' : 'opacity-100'}`}>
@@ -443,7 +585,9 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate }) {
               weight={set.weight}
               prevSet={prevSets.find(p => p.set_number === i + 1)}
               exerciseId={re.exercise_id}
+              isLastSet={i === currSets.length - 1}
               onUpdate={onUpdate}
+              onSetFilled={handleSetFilled}
             />
           ))}
         </>
@@ -503,13 +647,21 @@ function ConfirmFinishModal({ currentSets, exercises, saving, onConfirm, onCance
 // ─────────────────────────────────────────────
 // SetRow: una serie — número, input reps, input peso, dato anterior
 // ─────────────────────────────────────────────
-function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, onUpdate }) {
+function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, isLastSet, onUpdate, onSetFilled }) {
   const beatsReps   = prevSet && reps   !== '' && parseInt(reps)     > prevSet.reps_done
   const beatsWeight = prevSet && weight !== '' && parseFloat(weight) > prevSet.weight_done
 
   const prevText = prevSet
     ? `${prevSet.reps_done ?? '?'}r × ${prevSet.weight_done ?? '?'}kg`
     : '—'
+
+  // Al salir del input de peso, si ambos campos están rellenos y no es la última serie
+  // → notificar a ExerciseCard para arrancar el temporizador de descanso
+  function handleWeightBlur() {
+    if (!isLastSet && reps !== '' && weight !== '') {
+      onSetFilled?.(setIndex)
+    }
+  }
 
   return (
     <div className="grid grid-cols-[1.5rem_1fr_1fr_4rem] gap-2 items-center mb-1.5">
@@ -533,6 +685,7 @@ function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, onUpda
           placeholder="—"
           value={weight}
           onChange={e => onUpdate(exerciseId, setIndex, 'weight', e.target.value)}
+          onBlur={handleWeightBlur}
           className={`w-full border rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-1
             ${beatsWeight ? 'border-green-400 text-green-700 bg-green-50 focus:ring-green-400' : 'border-gray-300 focus:ring-gray-400'}`}
         />
