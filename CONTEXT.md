@@ -13,10 +13,10 @@
 
 ---
 
-## Versión actual: v6 — navegación adaptativa y recuperación de entrenamiento
+## Versión actual: v7 — registro de actividad diaria
 
-Las conexiones entrenador-cliente están completamente implementadas y funcionando en producción.
-El siguiente paso es la Fase 4: funcionalidades del entrenador.
+El registro de actividad diaria (pasos + actividades extra) está implementado en el frontend.
+Las tablas `daily_activity` y `activity_logs` deben crearse en Supabase para que funcione.
 
 **La app está desplegada en Vercel y funciona en producción.**
 
@@ -157,6 +157,34 @@ create table log_sets (
 );
 ```
 
+### `daily_activity`
+Registro diario de pasos. Un registro por usuario por día (restricción única `user_id, date`).
+```sql
+create table daily_activity (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid references auth.users(id) on delete cascade,
+  date       date not null,
+  steps      int,
+  notes      text,
+  created_at timestamptz default now(),
+  unique(user_id, date)
+);
+```
+
+### `activity_logs`
+Actividades extra del día (running, ciclismo, natación…). Vinculadas a un `daily_activity`.
+```sql
+create table activity_logs (
+  id                uuid primary key default gen_random_uuid(),
+  daily_activity_id uuid references daily_activity(id) on delete cascade,
+  user_id           uuid references auth.users(id) on delete cascade,
+  type              text not null,
+  duration_min      int,
+  notes             text,
+  created_at        timestamptz default now()
+);
+```
+
 ---
 
 ## Bloques de una rutina
@@ -291,6 +319,9 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 - Toggle pills "Todos" / "Solo míos" que filtra por `created_by = user.id`
 
 ### ProgressPage (`src/pages/ProgressPage.jsx`)
+Dos pestañas principales: **Ejercicios** | **Actividad**
+
+**Pestaña Ejercicios:**
 - Lista de ejercicios que el usuario ha entrenado al menos una vez (de `log_sets`, no del catálogo)
 - Clic en ejercicio → vista de detalle con gráfica y tabla
 - **Performance Score (PS)** por sesión:
@@ -301,6 +332,19 @@ Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
 - Gráfica de línea (recharts): eje X con fechas, eje Y con PS, tooltip al pasar por punto
 - Tabla debajo con sesiones en orden descendente: fecha, peso máx, volumen, PS
 - Requiere mínimo 2 sesiones para mostrar la gráfica
+
+**Pestaña Actividad — sub-pestaña "Hoy":**
+- Muestra la fecha actual en formato largo (ej: "martes 15 de abril")
+- Tarjeta de pasos: input numérico + botón "Guardar" → upsert en `daily_activity` (crea si no existe, actualiza si ya hay)
+- Tarjeta de actividades extra: lista de `activity_logs` del día con tipo, duración y notas
+- Botón "× Añadir" despliega formulario inline: tipo (select: Running, Ciclismo, Natación, Senderismo, Otra), duración en minutos, notas opcionales
+- `ensureDailyActivity()` crea el registro diario si no existe antes de insertar actividad
+- Botón × para eliminar cualquier actividad registrada
+
+**Pestaña Actividad — sub-pestaña "Historial":**
+- Carga los últimos 30 días de `daily_activity` con sus `activity_logs` anidados
+- Gráfica de barras (recharts) con los pasos de los últimos 7 días (solo si ≥ 2 días con datos)
+- Lista de días con pasos a la derecha y actividades como pills (ej: "Running 30min")
 
 ### ConnectionsPage (`src/pages/ConnectionsPage.jsx`)
 Carga `is_trainer` del perfil al montar:
@@ -377,6 +421,17 @@ create policy "trainer can read client logs" on workout_logs
       and client_id = workout_logs.user_id
       and active = true
   ));
+
+-- daily_activity y activity_logs: cada usuario solo ve sus propios datos
+alter table daily_activity enable row level security;
+create policy "own data" on daily_activity
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+alter table activity_logs enable row level security;
+create policy "own data" on activity_logs
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 ```
 
 > La tabla `exercises` es por usuario (`user_id`), con RLS activo. Cada usuario ve y gestiona solo sus propios ejercicios.
@@ -417,6 +472,8 @@ create policy "trainer can read client logs" on workout_logs
 - [x] `WorkoutPage` — modal de confirmación antes de finalizar con resumen de series
 - [x] Recuperación de entrenamiento activo tras recarga del navegador (localStorage)
 - [x] Navegación adaptativa: barra inferior en móvil, barra superior en PC
+- [x] `ProgressPage` — pestaña "Actividad": pasos diarios + actividades extra (running, ciclismo…)
+- [x] Tablas `daily_activity` y `activity_logs` creadas en Supabase con RLS
 
 ---
 
@@ -465,7 +522,13 @@ create policy "trainer can read client logs" on workout_logs
 - Recuperación automática del entrenamiento activo tras recarga del navegador (localStorage)
 - Banner "Entrenamiento en curso" en HomePage cuando el usuario navega atrás sin finalizar
 
-### v5 — App móvil
+### v7 — Registro de actividad diaria ✓ COMPLETADO
+- Nueva pestaña "Actividad" en ProgressPage junto a "Ejercicios"
+- Sub-pestaña "Hoy": registro de pasos (upsert en `daily_activity`) y actividades extra (running, ciclismo, natación, senderismo, otra)
+- Sub-pestaña "Historial": últimos 30 días con gráfica de barras de pasos (últimos 7 días) y lista con pills de actividades
+- Tablas `daily_activity` (unique por user+fecha) y `activity_logs` con RLS
+
+### v8 — App móvil
 - React Native con Expo
 - Misma base de datos Supabase, sin cambios en el backend
 
@@ -477,8 +540,9 @@ create policy "trainer can read client logs" on workout_logs
 Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel y funciona
 en producción — React + Vite + Tailwind v4 + Supabase + recharts, sin backend
 propio. Autenticación completa (email/contraseña + Google OAuth), sesión
-persistente, RLS activo. Ocho pantallas: HomePage, WorkoutPage, HistoryPage,
-RoutinesPage, ProgressPage, LoginPage, RegisterPage, ConnectionsPage y
-AcceptConnectionPage. Sistema de conexiones entrenador-cliente con QR/enlace
-y token funcionando. El siguiente paso es [DESCRIBIR TAREA].
+persistente, RLS activo. Pantallas: HomePage, WorkoutPage, HistoryPage,
+RoutinesPage, ProgressPage (con pestaña Actividad: pasos + actividades extra),
+LoginPage, RegisterPage, ConnectionsPage, AcceptConnectionPage y ProfilePage.
+Sistema de conexiones entrenador-cliente con QR/enlace y token funcionando.
+El siguiente paso es [DESCRIBIR TAREA].
 ```
