@@ -14,6 +14,7 @@
 //   - Se arranca al completar una serie (blur en el input de peso con ambos campos rellenos)
 //   - Solo si no es la última serie del ejercicio
 //   - Duración leída desde profiles.rest_seconds (default 90s)
+//   - Tipo de aviso leído desde profiles.rest_alert: 'vibrate' | 'sound' | 'both' (default 'both')
 //   - Si rest_seconds = 0, el temporizador está desactivado
 
 import { useState, useEffect, useRef } from 'react'
@@ -70,9 +71,10 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   const [showConfirm, setShowConfirm]   = useState(false)
 
   // Temporizador de descanso
-  const [restSeconds, setRestSeconds] = useState(90)   // cargado desde profiles.rest_seconds
-  const [restTimer, setRestTimer]     = useState(null) // null | { left, total, label }
-  const timerRef = useRef(null)                        // ref al setInterval para poder cancelarlo
+  const [restSeconds, setRestSeconds] = useState(90)      // cargado desde profiles.rest_seconds
+  const [restAlert, setRestAlert]     = useState('both')  // 'vibrate' | 'sound' | 'both'
+  const [restTimer, setRestTimer]     = useState(null)    // null | { left, total, label }
+  const timerRef = useRef(null)                           // ref al setInterval para poder cancelarlo
 
   // Clave de localStorage para el borrador de series de esta rutina
   const draftKey = `workout_draft_${routineId}`
@@ -87,17 +89,18 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
 
   useEffect(() => { loadExercises(routineId) }, [routineId])
 
-  // Cargar rest_seconds del perfil del usuario
+  // Cargar rest_seconds y rest_alert del perfil del usuario
   useEffect(() => {
-    async function loadRestSeconds() {
+    async function loadRestPrefs() {
       const { data } = await supabase
         .from('profiles')
-        .select('rest_seconds')
+        .select('rest_seconds, rest_alert')
         .eq('id', user.id)
         .single()
       if (data?.rest_seconds != null) setRestSeconds(data.rest_seconds)
+      if (data?.rest_alert)           setRestAlert(data.rest_alert)
     }
-    loadRestSeconds()
+    loadRestPrefs()
   }, [user.id])
 
   // Limpiar el intervalo al desmontar el componente
@@ -212,10 +215,10 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
       setRestTimer(prev => {
         if (!prev) return null
         if (prev.left <= 1) {
-          // Tiempo agotado: vibrar + beep + cerrar panel
+          // Tiempo agotado: aplicar aviso según preferencia y cerrar panel
           clearInterval(timerRef.current)
-          playBeep()
-          navigator.vibrate?.([200, 100, 200])
+          if (restAlert === 'sound' || restAlert === 'both') playBeep()
+          if (restAlert === 'vibrate' || restAlert === 'both') navigator.vibrate?.([200, 100, 200])
           return null
         }
         return { ...prev, left: prev.left - 1 }

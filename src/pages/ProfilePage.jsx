@@ -1,7 +1,7 @@
 // Página de perfil del usuario.
 //
 // Muestra nombre, email, el toggle "Modo entrenador" (campo is_trainer en profiles)
-// y la configuración del temporizador de descanso (campo rest_seconds en profiles).
+// y la configuración del temporizador de descanso (rest_seconds y rest_alert en profiles).
 // También contiene el botón de cerrar sesión (se quitó de la barra de nav).
 
 import { useState, useEffect } from 'react'
@@ -10,24 +10,33 @@ import { supabase } from '../lib/supabase'
 // Opciones rápidas de descanso (0 = desactivado)
 const REST_PRESETS = [0, 60, 90, 120, 180]
 
+// Opciones de tipo de aviso al acabar el descanso
+const ALERT_OPTIONS = [
+  { value: 'vibrate', label: 'Solo vibración' },
+  { value: 'sound',   label: 'Solo sonido'    },
+  { value: 'both',    label: 'Vibración + sonido' },
+]
+
 export default function ProfilePage({ user, onSignOut }) {
-  const [isTrainer, setIsTrainer]   = useState(false)
-  const [restSeconds, setRestSeconds] = useState(90)   // tiempo de descanso en segundos
-  const [customRest, setCustomRest]   = useState('')   // input de valor personalizado
+  const [isTrainer, setIsTrainer]     = useState(false)
+  const [restSeconds, setRestSeconds] = useState(90)     // tiempo de descanso en segundos
+  const [restAlert, setRestAlert]     = useState('both') // 'vibrate' | 'sound' | 'both'
+  const [customRest, setCustomRest]   = useState('')     // input de valor personalizado
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
   const [savingRest, setSavingRest]   = useState(false)
 
-  // Cargar el perfil al montar para leer is_trainer y rest_seconds
+  // Cargar el perfil al montar para leer is_trainer, rest_seconds y rest_alert
   useEffect(() => {
     async function loadProfile() {
       const { data } = await supabase
         .from('profiles')
-        .select('is_trainer, rest_seconds')
+        .select('is_trainer, rest_seconds, rest_alert')
         .eq('id', user.id)
         .single()
       setIsTrainer(data?.is_trainer ?? false)
       setRestSeconds(data?.rest_seconds ?? 90)
+      setRestAlert(data?.rest_alert ?? 'both')
       setLoading(false)
     }
     loadProfile()
@@ -54,6 +63,15 @@ export default function ProfilePage({ user, onSignOut }) {
     setRestSeconds(value)
     setCustomRest('')
     setSavingRest(false)
+  }
+
+  // Guarda rest_alert en BD y actualiza el estado local (guardado inmediato al seleccionar)
+  async function saveRestAlert(value) {
+    await supabase
+      .from('profiles')
+      .update({ rest_alert: value })
+      .eq('id', user.id)
+    setRestAlert(value)
   }
 
   if (loading) {
@@ -151,6 +169,29 @@ export default function ProfilePage({ user, onSignOut }) {
             {savingRest ? '...' : 'Guardar'}
           </button>
         </div>
+
+        {/* Tipo de aviso al acabar el descanso (solo visible si el timer está activo) */}
+        {restSeconds > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <p className="text-xs font-medium text-gray-600 mb-2">Aviso al acabar</p>
+            <div className="flex flex-col gap-1.5">
+              {ALERT_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => saveRestAlert(opt.value)}
+                  className={`text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
+                    restAlert === opt.value
+                      ? 'bg-gray-900 text-white border-gray-900'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">La vibración solo funciona en móvil</p>
+          </div>
+        )}
       </div>
 
       {/* Botón cerrar sesión */}

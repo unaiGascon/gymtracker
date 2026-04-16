@@ -481,8 +481,8 @@ create policy "own data" on activity_logs
 - [x] Navegación adaptativa: barra inferior en móvil, barra superior en PC
 - [x] `ProgressPage` — pestaña "Actividad": pasos diarios + actividades extra (running, ciclismo…)
 - [x] Tablas `daily_activity` y `activity_logs` creadas en Supabase con RLS
-- [x] Temporizador de descanso entre series en `WorkoutPage` (cuenta atrás + barra + vibración + beep)
-- [x] `ProfilePage` — configuración del tiempo de descanso (pills 0/60/90/120/180s + valor personalizado)
+- [x] Temporizador de descanso entre series en `WorkoutPage` (cuenta atrás + barra + aviso configurable)
+- [x] `ProfilePage` — configuración del descanso: tiempo (pills + personalizado) y tipo de aviso (vibración/sonido/ambos)
 
 ---
 
@@ -538,7 +538,8 @@ create policy "own data" on activity_logs
 - Al llegar a 0: vibración (`navigator.vibrate`) + beep (Web Audio API, sin archivos externos)
 - Duración configurable en ProfilePage: pills 0/60/90/120/180s + input personalizado
 - Si `rest_seconds = 0`, el temporizador está desactivado sin cambios visuales
-- Campo `rest_seconds` (int, default 90) en tabla `profiles`
+- Tipo de aviso configurable en `profiles.rest_alert`: `'vibrate'` | `'sound'` | `'both'` (default `'both'`)
+- Campos en `profiles`: `rest_seconds int default 90`, `rest_alert text default 'both'`
 
 ### v7 — Registro de actividad diaria ✓ COMPLETADO
 - Nueva pestaña "Actividad" en ProgressPage junto a "Ejercicios"
