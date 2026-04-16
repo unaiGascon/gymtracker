@@ -74,18 +74,11 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   const [restSeconds, setRestSeconds] = useState(90)      // cargado desde profiles.rest_seconds
   const [restAlert, setRestAlert]     = useState('both')  // 'vibrate' | 'sound' | 'both'
   const [restTimer, setRestTimer]     = useState(null)    // null | { left, total, label }
-  const timerRef = useRef(null)                           // ref al setInterval para poder cancelarlo
+  const timerRef   = useRef(null)   // ref al setInterval para poder cancelarlo
+  const hasStarted = useRef(false)  // true tras el primer input del usuario; evita guardar activeRoutineId al montar
 
   // Clave de localStorage para el borrador de series de esta rutina
   const draftKey = `workout_draft_${routineId}`
-
-  // Al montar: marcar la rutina como activa para sobrevivir recargas del navegador.
-  // Al desmontar: no limpiamos — la limpieza la hace finishWorkout al guardar,
-  // así el estado persiste si el usuario pulsa "atrás" hacia la home.
-  useEffect(() => {
-    localStorage.setItem('activeRoutineId',   routineId)
-    localStorage.setItem('activeRoutineName', routineName)
-  }, [routineId, routineName])
 
   useEffect(() => { loadExercises(routineId) }, [routineId])
 
@@ -192,6 +185,15 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
 
   // Actualiza un campo de una serie y persiste el estado completo en localStorage
   function updateSet(exerciseId, setIndex, field, value) {
+    // Primera vez que el usuario escribe algo: marcar la rutina como activa en localStorage.
+    // Se hace aquí y no al montar para evitar que simplemente abrir la pantalla
+    // active el "entrenamiento en curso" sin haber registrado ningún dato.
+    if (value !== '' && !hasStarted.current) {
+      hasStarted.current = true
+      localStorage.setItem('activeRoutineId',   routineId)
+      localStorage.setItem('activeRoutineName', routineName)
+    }
+
     setCurrentSets(prev => {
       const updated = {
         ...prev,
