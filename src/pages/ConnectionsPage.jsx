@@ -29,10 +29,15 @@ function generateToken() {
 
 // ─── Componente raíz ─────────────────────────────────────────────────────────
 
-export default function ConnectionsPage({ user }) {
+// trainerOnly: si true, muestra directamente TrainerSection sin pestañas ni carga de perfil.
+// Se usa desde App.jsx en la pestaña "Mis clientes" del modo entrenador.
+export default function ConnectionsPage({ user, trainerOnly = false }) {
   const [tab, setTab]           = useState('client') // 'client' | 'trainer'
   const [isTrainer, setIsTrainer] = useState(false)
   const [loading, setLoading]   = useState(true)
+
+  // Si trainerOnly, saltar toda la lógica de perfil y mostrar TrainerSection directamente
+  if (trainerOnly) return <TrainerSection user={user} />
 
   // Cargar is_trainer al montar para saber qué pestañas mostrar
   useEffect(() => {

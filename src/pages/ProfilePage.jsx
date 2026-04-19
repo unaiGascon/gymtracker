@@ -42,15 +42,16 @@ export default function ProfilePage({ user, onSignOut }) {
     loadProfile()
   }, [user.id])
 
-  // Actualiza is_trainer en BD y en el estado local
+  // Actualiza is_trainer en BD y recarga la app para aplicar la navegación correcta.
+  // window.location.reload() es intencional: el modo de navegación cambia completamente
+  // según is_trainer y es más simple recargar que sincronizar el estado global.
   async function toggleTrainerMode(value) {
     setSaving(true)
     await supabase
       .from('profiles')
       .update({ is_trainer: value })
       .eq('id', user.id)
-    setIsTrainer(value)
-    setSaving(false)
+    window.location.reload()
   }
 
   // Guarda rest_seconds en BD y actualiza el estado local

@@ -32,8 +32,9 @@ const MUSCLE_GROUPS = [
 // ─────────────────────────────────────────────
 // Componente raíz — gestiona sección activa y navegación interna
 // ─────────────────────────────────────────────
-export default function RoutinesPage({ user }) {
-  const [view, setView]               = useState('routine-list')
+// defaultTab: 'routines' (por defecto) | 'templates' (para la pestaña del nav de entrenador)
+export default function RoutinesPage({ user, defaultTab }) {
+  const [view, setView]               = useState(defaultTab === 'templates' ? 'template-list' : 'routine-list')
   const [selectedRoutine, setRoutine] = useState(null)  // { id, name, order, ... }
   const [editingExercise, setEditing] = useState(null)  // null = crear nuevo
   const [isTrainer, setIsTrainer]     = useState(false) // controla si se muestra la pestaña Plantillas
