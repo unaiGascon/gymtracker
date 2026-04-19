@@ -657,7 +657,7 @@ function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, isLast
   const beatsWeight = prevSet && weight !== '' && parseFloat(weight) > prevSet.weight_done
 
   const prevText = prevSet
-    ? `${prevSet.reps_done ?? '?'}r × ${prevSet.weight_done ?? '?'}kg`
+    ? `${prevSet.reps_done ?? '?'}r × ${prevSet.weight_done ?? '?'}`
     : '—'
 
   // Al salir del input de peso, si ambos campos están rellenos y no es la última serie
