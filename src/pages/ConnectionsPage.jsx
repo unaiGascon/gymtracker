@@ -29,17 +29,15 @@ function generateToken() {
 
 // ─── Componente raíz ─────────────────────────────────────────────────────────
 
-// trainerOnly: si true, muestra directamente TrainerSection sin pestañas ni carga de perfil.
+// trainerOnly: si true, muestra solo la lista de clientes (sin panel de enlace).
 // Se usa desde App.jsx en la pestaña "Mis clientes" del modo entrenador.
 export default function ConnectionsPage({ user, trainerOnly = false }) {
-  const [tab, setTab]           = useState('client') // 'client' | 'trainer'
-  const [isTrainer, setIsTrainer] = useState(false)
-  const [loading, setLoading]   = useState(true)
+  const [isTrainer, setIsTrainer] = useState(null) // null = cargando
 
-  // Si trainerOnly, saltar toda la lógica de perfil y mostrar TrainerSection directamente
-  if (trainerOnly) return <TrainerSection user={user} />
+  // Si trainerOnly, mostrar solo la lista de clientes sin cargar perfil
+  if (trainerOnly) return <TrainerSection user={user} hideLink={true} />
 
-  // Cargar is_trainer al montar para saber qué pestañas mostrar
+  // Cargar is_trainer para saber qué sección mostrar
   useEffect(() => {
     async function loadProfile() {
       const { data } = await supabase
@@ -48,12 +46,11 @@ export default function ConnectionsPage({ user, trainerOnly = false }) {
         .eq('id', user.id)
         .single()
       setIsTrainer(data?.is_trainer ?? false)
-      setLoading(false)
     }
     loadProfile()
   }, [user.id])
 
-  if (loading) {
+  if (isTrainer === null) {
     return <div className="p-8 text-center text-gray-400">Cargando...</div>
   }
 
@@ -61,31 +58,11 @@ export default function ConnectionsPage({ user, trainerOnly = false }) {
     <div className="p-4 max-w-xl mx-auto">
       <h2 className="text-xl font-bold mb-4">Conexiones</h2>
 
-      {/* Pestañas: solo se muestran si el usuario es entrenador */}
-      {isTrainer && (
-        <div className="flex gap-2 mb-6">
-          {[
-            { id: 'client',  label: 'Soy cliente'    },
-            { id: 'trainer', label: 'Soy entrenador' },
-          ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-                tab === t.id
-                  ? 'bg-black text-white'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Si no es entrenador, solo ve "Soy cliente" sin pestañas */}
-      {(!isTrainer || tab === 'client')  && <ClientSection  user={user} />}
-      {isTrainer && tab === 'trainer'    && <TrainerSection user={user} />}
+      {/* Cada rol ve solo su sección — sin pestañas */}
+      {isTrainer
+        ? <TrainerSection user={user} />
+        : <ClientSection  user={user} />
+      }
     </div>
   )
 }
@@ -251,7 +228,8 @@ function TrainerNotesForClient({ trainerId, clientId, trainerName }) {
 
 // ─── Sección: el usuario es entrenador ───────────────────────────────────────
 
-function TrainerSection({ user }) {
+// hideLink: si true, oculta el panel de generación de enlace (usado en la home del entrenador)
+function TrainerSection({ user, hideLink = false }) {
   const [link, setLink]               = useState(null)
   const [generating, setGenerating]   = useState(false)
   const [connections, setConnections] = useState([])
@@ -317,24 +295,26 @@ function TrainerSection({ user }) {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Panel de generación de enlace */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-5">
-        <h3 className="font-semibold mb-1">Añade un cliente</h3>
-        <p className="text-sm text-gray-500 mb-4">
-          Genera un enlace y compártelo con tu cliente para conectaros.
-        </p>
-        {link ? (
-          <LinkDisplay link={link} onNewLink={() => setLink(null)} />
-        ) : (
-          <button
-            onClick={generateLink}
-            disabled={generating}
-            className="w-full bg-black text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-50"
-          >
-            {generating ? 'Generando...' : 'Generar enlace para mi cliente'}
-          </button>
-        )}
-      </div>
+      {/* Panel de enlace: visible solo en Conexiones, no en la home de clientes */}
+      {!hideLink && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-5">
+          <h3 className="font-semibold mb-1">Añade un cliente</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Genera un enlace y compártelo con tu cliente para conectaros.
+          </p>
+          {link ? (
+            <LinkDisplay link={link} onNewLink={() => setLink(null)} />
+          ) : (
+            <button
+              onClick={generateLink}
+              disabled={generating}
+              className="w-full bg-black text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-50"
+            >
+              {generating ? 'Generando...' : 'Generar enlace para mi cliente'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Lista de clientes */}
       <div>
@@ -892,17 +872,19 @@ function RoutineRow({ r, onEdit, onDelete }) {
 // ─── Sub-vista: notas del entrenador sobre el cliente ────────────────────────
 
 function ClientNotes({ clientId, trainerId }) {
-  const [notes, setNotes]     = useState([])
-  const [loading, setLoading] = useState(true)
-  const [newNote, setNewNote] = useState('')
-  const [saving, setSaving]   = useState(false)
+  const [notes, setNotes]               = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [newNote, setNewNote]           = useState('')
+  const [isPrivate, setIsPrivate]       = useState(true)
+  const [saving, setSaving]             = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   useEffect(() => { loadNotes() }, [])
 
   async function loadNotes() {
     const { data } = await supabase
       .from('trainer_notes')
-      .select('id, content, created_at')
+      .select('id, content, created_at, is_private')
       .eq('trainer_id', trainerId)
       .eq('client_id', clientId)
       .order('created_at', { ascending: false })
@@ -910,7 +892,6 @@ function ClientNotes({ clientId, trainerId }) {
     setLoading(false)
   }
 
-  // Guarda una nota nueva y actualiza la lista localmente
   async function saveNote(e) {
     e.preventDefault()
     if (!newNote.trim()) return
@@ -918,8 +899,8 @@ function ClientNotes({ clientId, trainerId }) {
 
     const { data, error } = await supabase
       .from('trainer_notes')
-      .insert({ trainer_id: trainerId, client_id: clientId, content: newNote.trim() })
-      .select('id, content, created_at')
+      .insert({ trainer_id: trainerId, client_id: clientId, content: newNote.trim(), is_private: isPrivate })
+      .select('id, content, created_at, is_private')
       .single()
 
     if (!error && data) {
@@ -930,8 +911,13 @@ function ClientNotes({ clientId, trainerId }) {
   }
 
   async function deleteNote(id) {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id)
+      return
+    }
     await supabase.from('trainer_notes').delete().eq('id', id)
     setNotes(prev => prev.filter(n => n.id !== id))
+    setConfirmDeleteId(null)
   }
 
   return (
@@ -946,6 +932,26 @@ function ClientNotes({ clientId, trainerId }) {
           rows={3}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400 resize-none"
         />
+        {/* Toggle compartir con cliente */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">
+            {isPrivate ? 'Solo visible para ti' : 'Visible para el cliente'}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Compartir con cliente</span>
+            <button
+              type="button"
+              onClick={() => setIsPrivate(prev => !prev)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${
+                !isPrivate ? 'bg-gray-900' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                !isPrivate ? 'translate-x-4' : 'translate-x-0'
+              }`} />
+            </button>
+          </div>
+        </div>
         <button
           type="submit"
           disabled={saving || !newNote.trim()}
@@ -955,7 +961,7 @@ function ClientNotes({ clientId, trainerId }) {
         </button>
       </form>
 
-      {/* Lista de notas anteriores */}
+      {/* Lista de notas */}
       {loading ? (
         <p className="text-sm text-gray-400">Cargando notas...</p>
       ) : notes.length === 0 ? (
@@ -964,14 +970,28 @@ function ClientNotes({ clientId, trainerId }) {
         <ul className="flex flex-col gap-2">
           {notes.map(n => (
             <li key={n.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                  n.is_private
+                    ? 'bg-gray-100 text-gray-500'
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                  {n.is_private ? 'Privada' : 'Compartida'}
+                </span>
+              </div>
               <p className="text-sm text-gray-800 whitespace-pre-wrap">{n.content}</p>
               <div className="flex items-center justify-between mt-2">
                 <p className="text-xs text-gray-400">{formatDate(n.created_at)}</p>
                 <button
                   onClick={() => deleteNote(n.id)}
-                  className="text-xs text-red-400 hover:text-red-600"
+                  onBlur={() => setConfirmDeleteId(null)}
+                  className={`text-xs transition-colors ${
+                    confirmDeleteId === n.id
+                      ? 'text-red-600 font-semibold'
+                      : 'text-red-400 hover:text-red-600'
+                  }`}
                 >
-                  Eliminar
+                  {confirmDeleteId === n.id ? '¿Confirmar?' : 'Eliminar'}
                 </button>
               </div>
             </li>

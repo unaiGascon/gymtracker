@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function HomePage({ user, onSelectRoutine }) {
+export default function HomePage({ user, onSelectRoutine, hasNewNotes, onGoToNotes }) {
   const [routines, setRoutines]         = useState([])  // rutinas propias ordenadas por "order"
   const [assignedRoutines, setAssigned] = useState([])  // rutinas asignadas por el entrenador
   const [todayId, setTodayId]           = useState(null)
@@ -82,6 +82,17 @@ export default function HomePage({ user, onSelectRoutine }) {
 
   return (
     <div className="p-4">
+      {/* Banner notas nuevas del entrenador */}
+      {hasNewNotes && (
+        <button
+          onClick={onGoToNotes}
+          className="w-full flex items-center justify-between bg-blue-50 border border-blue-200 text-blue-800 rounded-xl px-5 py-3 mb-3"
+        >
+          <p className="text-sm font-medium">Tu entrenador ha dejado notas nuevas</p>
+          <span className="text-sm">→</span>
+        </button>
+      )}
+
       {/* Banner de entrenamiento en curso — visible si el usuario volvió atrás sin finalizar */}
       {activeId && (
         <button

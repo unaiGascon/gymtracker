@@ -35,6 +35,7 @@ import ActivityPage           from './pages/ActivityPage'
 import ConnectionsPage        from './pages/ConnectionsPage'
 import AcceptConnectionPage   from './pages/AcceptConnectionPage'
 import ProfilePage            from './pages/ProfilePage'
+import NotesPage              from './pages/NotesPage'
 
 // ── Pestañas modo CLIENTE ─────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ const CLIENT_TOP_TABS = [
   { id: 'routines', label: 'Rutinas'   },
   { id: 'progress', label: 'Progreso'  },
   { id: 'activity', label: 'Actividad' },
+  { id: 'notes',    label: 'Notas'     },
   { id: 'profile',  label: 'Perfil'    },
 ]
 
@@ -51,7 +53,7 @@ const CLIENT_BOTTOM_TABS = [
   { id: 'home',     label: 'Inicio',    icon: '⌂' },
   { id: 'history',  label: 'Historial', icon: '◷' },
   { id: 'routines', label: 'Rutinas',   icon: '☰' },
-  { id: 'activity', label: 'Actividad', icon: '◎' },
+  { id: 'notes',    label: 'Notas',     icon: '✉' },
   { id: 'profile',  label: 'Perfil',    icon: '◯' },
 ]
 
@@ -81,6 +83,8 @@ export default function App() {
 
   // null = cargando perfil, true/false = valor real
   const [isTrainer, setIsTrainer] = useState(null)
+
+  const [hasNewNotes, setHasNewNotes] = useState(false)
 
   // Inicialización lazy: arrancar en WorkoutPage si había entrenamiento en curso
   const [page, setPage]               = useState(() =>
@@ -125,11 +129,26 @@ export default function App() {
         .single()
       const trainer = data?.is_trainer ?? false
       setIsTrainer(trainer)
-      // Los entrenadores arrancan siempre en 'Mis clientes', salvo que haya un entrenamiento en curso
-      if (trainer) setPage(prev => prev === 'workout' ? prev : 'clients')
+      if (trainer) {
+        setPage(prev => prev === 'workout' ? prev : 'clients')
+      } else {
+        checkNewNotes(session.user.id)
+      }
     }
     loadIsTrainer()
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function checkNewNotes(userId) {
+    const lastVisited = localStorage.getItem('notesLastVisited')
+    let query = supabase
+      .from('trainer_notes')
+      .select('id', { count: 'exact', head: true })
+      .eq('client_id', userId)
+      .eq('is_private', false)
+    if (lastVisited) query = query.gt('created_at', lastVisited)
+    const { count } = await query
+    setHasNewNotes((count ?? 0) > 0)
+  }
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -207,7 +226,12 @@ export default function App() {
 
         {/* ── Páginas modo CLIENTE ── */}
         {page === 'home' && (
-          <HomePage user={user} onSelectRoutine={goToWorkout} />
+          <HomePage
+            user={user}
+            onSelectRoutine={goToWorkout}
+            hasNewNotes={hasNewNotes}
+            onGoToNotes={() => setPage('notes')}
+          />
         )}
         {page === 'workout' && (
           <WorkoutPage
@@ -246,6 +270,11 @@ export default function App() {
           <ConnectionsPage user={user} trainerOnly={isTrainer} />
         )}
 
+        {/* ── Notas del entrenador (solo clientes) ── */}
+        {page === 'notes' && (
+          <NotesPage user={user} onVisit={() => setHasNewNotes(false)} />
+        )}
+
         {/* ── Compartida: Perfil ── */}
         {page === 'profile' && (
           <ProfilePage user={user} onSignOut={handleSignOut} />
@@ -261,16 +290,20 @@ export default function App() {
         >
           {bottomTabs.map(tab => {
             const isActive = page === tab.id
+            const showBadge = tab.id === 'notes' && hasNewNotes && !isActive
             return (
               <button
                 key={tab.id}
                 onClick={() => setPage(tab.id)}
                 className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5"
               >
-                <span className={`text-lg leading-none rounded-lg w-9 h-7 flex items-center justify-center ${
+                <span className={`relative text-lg leading-none rounded-lg w-9 h-7 flex items-center justify-center ${
                   isActive ? 'bg-gray-900 text-white' : 'text-gray-400'
                 }`}>
                   {tab.icon}
+                  {showBadge && (
+                    <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full" />
+                  )}
                 </span>
                 <span className={`text-[10px] font-medium ${
                   isActive ? 'text-gray-900' : 'text-gray-400'
