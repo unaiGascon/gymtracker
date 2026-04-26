@@ -34,6 +34,29 @@ const BLOCK_LABELS = {
 }
 const BLOCK_ORDER = ['warmup', 'main', 'cardio', 'cooldown']
 
+// Hace parpadear la pantalla 2-3 veces con un overlay blanco semitransparente.
+// Crea un div temporal, anima su opacidad con setTimeout y lo elimina al acabar.
+function playFlash() {
+  const el = document.createElement('div')
+  el.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:9999;pointer-events:none;opacity:0;transition:opacity 80ms'
+  document.body.appendChild(el)
+
+  // Secuencia: 0 → 0.85 → 0 → 0.85 → 0 → eliminar
+  const steps = [
+    [10,  0.85],
+    [130, 0],
+    [220, 0.85],
+    [350, 0],
+    [460, null],  // null = eliminar el div
+  ]
+  steps.forEach(([ms, opacity]) => {
+    setTimeout(() => {
+      if (opacity === null) { el.remove() }
+      else { el.style.opacity = opacity }
+    }, ms)
+  })
+}
+
 // Genera un beep corto con Web Audio API — sin archivos externos
 function playBeep() {
   try {
@@ -210,7 +233,8 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   // Arranca el temporizador de descanso con el tiempo configurado en el perfil.
   // label: texto informativo con la siguiente serie (ej: "Serie 2 · Press banca")
   function startRest(label) {
-    if (restSeconds <= 0) return  // temporizador desactivado
+    if (restSeconds <= 0) return   // temporizador desactivado
+    if (restTimer !== null) return // ya está corriendo — no reiniciar
     clearInterval(timerRef.current)
     setRestTimer({ left: restSeconds, total: restSeconds, label })
     timerRef.current = setInterval(() => {
@@ -221,6 +245,7 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
           clearInterval(timerRef.current)
           if (restAlert === 'sound' || restAlert === 'both') playBeep()
           if (restAlert === 'vibrate' || restAlert === 'both') navigator.vibrate?.([200, 100, 200])
+          playFlash()
           return null
         }
         return { ...prev, left: prev.left - 1 }
@@ -473,14 +498,15 @@ function SupersetGroup({ exercises, previousSets, currentSets, onUpdateSet, onRe
         <div className="px-3 pt-2 pb-0">
           <span className="text-purple-600 text-xs font-bold tracking-widest">SUPERSERIE</span>
         </div>
-        {exercises.map(re => (
+        {exercises.map((re, i) => (
           <ExerciseCard
             key={re.id}
             re={re}
             prevSets={previousSets[re.exercise_id] || []}
             currSets={currentSets[re.exercise_id]  || []}
             onUpdate={onUpdateSet}
-            onRestStart={onRestStart}
+            // El temporizador solo arranca al completar una serie del último ejercicio del grupo
+            onRestStart={i === exercises.length - 1 ? onRestStart : undefined}
           />
         ))}
       </div>
