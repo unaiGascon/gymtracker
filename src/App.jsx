@@ -125,8 +125,8 @@ export default function App() {
         .single()
       const trainer = data?.is_trainer ?? false
       setIsTrainer(trainer)
-      // Si el usuario es entrenador y la página actual es del modo cliente, redirigir a 'clients'
-      if (trainer && page === 'home') setPage('clients')
+      // Los entrenadores arrancan siempre en 'Mis clientes', salvo que haya un entrenamiento en curso
+      if (trainer) setPage(prev => prev === 'workout' ? prev : 'clients')
     }
     loadIsTrainer()
   }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -241,8 +241,9 @@ export default function App() {
           <RoutinesPage user={user} defaultTab="templates" />
         )}
         {page === 'connections' && (
-          // Gestión de conexiones: QR para clientes + enlace con propio entrenador
-          <ConnectionsPage user={user} />
+          // trainerOnly={isTrainer}: si el usuario es entrenador, muestra solo
+          // la sección del entrenador (QR + lista de clientes) sin pestañas de rol
+          <ConnectionsPage user={user} trainerOnly={isTrainer} />
         )}
 
         {/* ── Compartida: Perfil ── */}
