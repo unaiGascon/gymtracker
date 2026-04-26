@@ -1,11 +1,10 @@
-// Página de perfil del usuario.
-//
-// Muestra nombre, email, el toggle "Modo entrenador" (campo is_trainer en profiles)
-// y la configuración del temporizador de descanso (rest_seconds y rest_alert en profiles).
-// También contiene el botón de cerrar sesión (se quitó de la barra de nav).
+// Página de perfil del usuario — dos sub-pestañas:
+//   "Mi perfil"   → nombre, email, toggle is_trainer, config descanso, cerrar sesión
+//   "Conexiones"  → gestión de conexiones entrenador-cliente (ConnectionsPage)
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import ConnectionsPage from './ConnectionsPage'
 
 // Opciones rápidas de descanso (0 = desactivado)
 const REST_PRESETS = [0, 60, 90, 120, 180]
@@ -18,10 +17,11 @@ const ALERT_OPTIONS = [
 ]
 
 export default function ProfilePage({ user, onSignOut }) {
+  const [profileTab, setProfileTab]   = useState('profile') // 'profile' | 'connections'
   const [isTrainer, setIsTrainer]     = useState(false)
-  const [restSeconds, setRestSeconds] = useState(90)     // tiempo de descanso en segundos
-  const [restAlert, setRestAlert]     = useState('both') // 'vibrate' | 'sound' | 'both'
-  const [customRest, setCustomRest]   = useState('')     // input de valor personalizado
+  const [restSeconds, setRestSeconds] = useState(90)
+  const [restAlert, setRestAlert]     = useState('both')
+  const [customRest, setCustomRest]   = useState('')
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
   const [savingRest, setSavingRest]   = useState(false)
@@ -85,7 +85,33 @@ export default function ProfilePage({ user, onSignOut }) {
     || user.email
 
   return (
-    <div className="p-4 max-w-sm mx-auto">
+    <div>
+      {/* Pestañas internas: Mi perfil | Conexiones */}
+      <div className="flex border-b border-gray-200 bg-white px-4 pt-4 gap-4">
+        {[
+          { id: 'profile',     label: 'Mi perfil'   },
+          { id: 'connections', label: 'Conexiones'  },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setProfileTab(t.id)}
+            className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+              profileTab === t.id
+                ? 'border-gray-900 text-gray-900'
+                : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Conexiones — gestión de conexiones entrenador-cliente */}
+      {profileTab === 'connections' && <ConnectionsPage user={user} />}
+
+      {/* Mi perfil — datos, config descanso, cerrar sesión */}
+      {profileTab === 'profile' && (
+      <div className="p-4 max-w-sm mx-auto">
       <h1 className="text-2xl font-bold mb-6">Perfil</h1>
 
       {/* Datos del usuario + toggle modo entrenador */}
@@ -127,8 +153,8 @@ export default function ProfilePage({ user, onSignOut }) {
         </div>
       </div>
 
-      {/* Configuración del temporizador de descanso */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-5 mb-4">
+      {/* Configuración del temporizador de descanso — solo en modo cliente */}
+      {!isTrainer && <div className="bg-white border border-gray-200 rounded-2xl p-5 mb-4">
         <p className="text-sm font-medium mb-0.5">Descanso entre series</p>
         <p className="text-xs text-gray-400 mb-4">
           Se activa al completar una serie (0 = desactivado)
@@ -193,7 +219,7 @@ export default function ProfilePage({ user, onSignOut }) {
             <p className="text-xs text-gray-400 mt-2">La vibración solo funciona en móvil</p>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Botón cerrar sesión */}
       <button
@@ -202,6 +228,8 @@ export default function ProfilePage({ user, onSignOut }) {
       >
         Cerrar sesión
       </button>
+      </div>
+      )}
     </div>
   )
 }

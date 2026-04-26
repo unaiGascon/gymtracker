@@ -1,8 +1,10 @@
-// Pantalla de progreso — gráfica de Performance Score por ejercicio
-// La pestaña "Actividad" se movió a ActivityPage.jsx (pestaña independiente en la nav)
+// Pantalla de progreso — dos sub-pestañas:
+//   "Progreso"  → gráfica de Performance Score por ejercicio
+//   "Actividad" → pasos diarios y actividades extra (ActivityPage)
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import ActivityPage from './ActivityPage'
 import {
   LineChart, Line,
   XAxis, YAxis, CartesianGrid,
@@ -10,25 +12,47 @@ import {
 } from 'recharts'
 
 // ─────────────────────────────────────────────
-// Componente raíz — lista de ejercicios → detalle con gráfica
+// Componente raíz — pestañas internas: Progreso | Actividad
 // ─────────────────────────────────────────────
 export default function ProgressPage({ user }) {
-  const [view, setView]         = useState('list') // 'list' | 'detail'
+  const [tab, setTab]           = useState('progress') // 'progress' | 'activity'
+  const [view, setView]         = useState('list')     // 'list' | 'detail' (solo en tab progress)
   const [selected, setSelected] = useState(null)
 
   return (
     <div>
+      {/* Pestañas internas — se ocultan al entrar en el detalle de un ejercicio */}
       {view === 'list' && (
-        <ExerciseList
-          onSelect={ex => { setSelected(ex); setView('detail') }}
-        />
+        <div className="flex border-b border-gray-200 bg-white px-4 pt-4 gap-4">
+          {[
+            { id: 'progress', label: 'Progreso'  },
+            { id: 'activity', label: 'Actividad' },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                tab === t.id
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       )}
-      {view === 'detail' && (
-        <ExerciseProgress
-          exercise={selected}
-          onBack={() => setView('list')}
-        />
+
+      {/* Pestaña Progreso: lista de ejercicios → gráfica de PS */}
+      {tab === 'progress' && view === 'list' && (
+        <ExerciseList onSelect={ex => { setSelected(ex); setView('detail') }} />
       )}
+      {tab === 'progress' && view === 'detail' && (
+        <ExerciseProgress exercise={selected} onBack={() => setView('list')} />
+      )}
+
+      {/* Pestaña Actividad: pasos diarios + actividades extra */}
+      {tab === 'activity' && <ActivityPage user={user} />}
     </div>
   )
 }

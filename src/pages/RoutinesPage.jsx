@@ -14,6 +14,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import HistoryPage from './HistoryPage'
 
 const BLOCK_LABELS = {
   warmup:   'Calentamiento',
@@ -54,11 +55,14 @@ export default function RoutinesPage({ user, defaultTab }) {
     ? 'exercises'
     : view.startsWith('template')
       ? 'templates'
-      : 'routines'
+      : view === 'history'
+        ? 'history'
+        : 'routines'
 
   function switchSection(s) {
     if (s === 'exercises') setView('exercise-list')
     else if (s === 'templates') setView('template-list')
+    else if (s === 'history') setView('history')
     else setView('routine-list')
   }
 
@@ -67,9 +71,10 @@ export default function RoutinesPage({ user, defaultTab }) {
 
   // Pestañas disponibles según rol
   const tabs = [
-    { id: 'routines',  label: 'Rutinas'    },
+    { id: 'routines',   label: 'Mis rutinas' },
     ...(isTrainer ? [{ id: 'templates', label: 'Plantillas' }] : []),
-    { id: 'exercises', label: 'Ejercicios' },
+    { id: 'exercises',  label: 'Ejercicios'  },
+    { id: 'history',    label: 'Historial'   },
   ]
 
   return (
@@ -142,6 +147,9 @@ export default function RoutinesPage({ user, defaultTab }) {
           onSaved={() => setView('exercise-list')}
         />
       )}
+
+      {/* Historial de entrenamientos como sub-pestaña — sin botón volver (onBack omitido) */}
+      {view === 'history' && <HistoryPage user={user} />}
     </div>
   )
 }
@@ -174,6 +182,9 @@ function RoutineList({ user, onSelectRoutine }) {
     const { data } = await supabase
       .from('routines')
       .select('id, name, order')
+      .eq('user_id', user.id)   // solo rutinas propias
+      .is('assigned_to', null)  // excluir las asignadas a clientes
+      .neq('is_template', true) // excluir plantillas
       .order('order')
     setRoutines(data || [])
     setLoading(false)

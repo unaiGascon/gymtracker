@@ -63,15 +63,17 @@ export default function HistoryPage({ user, onBack }) {
   // ── Lista de sesiones ──
   return (
     <div className="p-4">
-      {/* Cabecera con botón para volver al inicio */}
+      {/* Cabecera — el botón volver solo aparece fuera del modo sub-pestaña */}
       <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={onBack}
-          className="text-gray-400 hover:text-black text-lg leading-none"
-          aria-label="Volver al inicio"
-        >
-          ←
-        </button>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="text-gray-400 hover:text-black text-lg leading-none"
+            aria-label="Volver al inicio"
+          >
+            ←
+          </button>
+        )}
         <h1 className="text-xl font-bold">Historial</h1>
       </div>
 

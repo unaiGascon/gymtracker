@@ -31,46 +31,48 @@ import WorkoutPage            from './pages/WorkoutPage'
 import HistoryPage            from './pages/HistoryPage'
 import RoutinesPage           from './pages/RoutinesPage'
 import ProgressPage           from './pages/ProgressPage'
-import ActivityPage           from './pages/ActivityPage'
 import ConnectionsPage        from './pages/ConnectionsPage'
 import AcceptConnectionPage   from './pages/AcceptConnectionPage'
 import ProfilePage            from './pages/ProfilePage'
 import NotesPage              from './pages/NotesPage'
 
-// ── Pestañas modo CLIENTE ─────────────────────────────────────────────────────
+// ── Pestañas modo CLIENTE — 4 tabs principales ───────────────────────────────
+//
+//   Inicio   → HomePage
+//   Rutinas  → RoutinesPage  (sub-tabs: Mis rutinas | Ejercicios | Historial)
+//   Progreso → ProgressPage  (sub-tabs: Progreso | Actividad)
+//   Perfil   → ProfilePage   (sub-tabs: Mi perfil | Conexiones)
 
 const CLIENT_TOP_TABS = [
-  { id: 'home',     label: 'Inicio'    },
-  { id: 'history',  label: 'Historial' },
-  { id: 'routines', label: 'Rutinas'   },
-  { id: 'progress', label: 'Progreso'  },
-  { id: 'activity', label: 'Actividad' },
-  { id: 'notes',    label: 'Notas'     },
-  { id: 'profile',  label: 'Perfil'    },
+  { id: 'home',     label: 'Inicio'   },
+  { id: 'routines', label: 'Rutinas'  },
+  { id: 'progress', label: 'Progreso' },
+  { id: 'profile',  label: 'Perfil'   },
 ]
 
 const CLIENT_BOTTOM_TABS = [
-  { id: 'home',     label: 'Inicio',    icon: '⌂' },
-  { id: 'history',  label: 'Historial', icon: '◷' },
-  { id: 'routines', label: 'Rutinas',   icon: '☰' },
-  { id: 'notes',    label: 'Notas',     icon: '✉' },
-  { id: 'profile',  label: 'Perfil',    icon: '◯' },
+  { id: 'home',     label: 'Inicio',   icon: '⌂' },
+  { id: 'routines', label: 'Rutinas',  icon: '☰' },
+  { id: 'progress', label: 'Progreso', icon: '↑' },
+  { id: 'profile',  label: 'Perfil',   icon: '◯' },
 ]
 
-// ── Pestañas modo ENTRENADOR ──────────────────────────────────────────────────
+// ── Pestañas modo ENTRENADOR — 3 tabs principales ────────────────────────────
+//
+//   Mis clientes → ConnectionsPage (trainerOnly)
+//   Plantillas   → RoutinesPage    (defaultTab='templates')
+//   Perfil       → ProfilePage     (sub-tabs: Mi perfil | Conexiones)
 
 const TRAINER_TOP_TABS = [
-  { id: 'clients',     label: 'Mis clientes' },
-  { id: 'templates',   label: 'Plantillas'   },
-  { id: 'connections', label: 'Conexiones'   },
-  { id: 'profile',     label: 'Perfil'       },
+  { id: 'clients',   label: 'Mis clientes' },
+  { id: 'templates', label: 'Plantillas'   },
+  { id: 'profile',   label: 'Perfil'       },
 ]
 
 const TRAINER_BOTTOM_TABS = [
-  { id: 'clients',     label: 'Clientes',   icon: '◎' },
-  { id: 'templates',   label: 'Plantillas', icon: '☰' },
-  { id: 'connections', label: 'Conexiones', icon: '⊕' },
-  { id: 'profile',     label: 'Perfil',     icon: '◯' },
+  { id: 'clients',   label: 'Clientes',   icon: '◎' },
+  { id: 'templates', label: 'Plantillas', icon: '☰' },
+  { id: 'profile',   label: 'Perfil',     icon: '◯' },
 ]
 
 export default function App() {
@@ -239,11 +241,12 @@ export default function App() {
             routineId={routineId}
             routineName={routineName}
             onBack={() => setPage(isTrainer ? 'clients' : 'home')}
-            onFinish={() => setPage('history')}
+            onFinish={() => setPage('routines')}
           />
         )}
+        {/* 'history' solo se muestra como fallback (URL directa, etc.) */}
         {page === 'history' && (
-          <HistoryPage user={user} onBack={() => setPage(isTrainer ? 'clients' : 'home')} />
+          <HistoryPage user={user} onBack={() => setPage('home')} />
         )}
         {page === 'routines' && (
           <RoutinesPage user={user} />
@@ -251,31 +254,21 @@ export default function App() {
         {page === 'progress' && (
           <ProgressPage user={user} />
         )}
-        {page === 'activity' && (
-          <ActivityPage user={user} />
-        )}
 
         {/* ── Páginas modo ENTRENADOR ── */}
         {page === 'clients' && (
-          // Muestra directamente TrainerSection (lista de clientes + fichas)
           <ConnectionsPage user={user} trainerOnly={true} />
         )}
         {page === 'templates' && (
-          // Abre RoutinesPage con la pestaña Plantillas preseleccionada
           <RoutinesPage user={user} defaultTab="templates" />
         )}
-        {page === 'connections' && (
-          // trainerOnly={isTrainer}: si el usuario es entrenador, muestra solo
-          // la sección del entrenador (QR + lista de clientes) sin pestañas de rol
-          <ConnectionsPage user={user} trainerOnly={isTrainer} />
-        )}
 
-        {/* ── Notas del entrenador (solo clientes) ── */}
+        {/* ── Notas del entrenador — accesible solo desde el banner de Inicio ── */}
         {page === 'notes' && (
           <NotesPage user={user} onVisit={() => setHasNewNotes(false)} />
         )}
 
-        {/* ── Compartida: Perfil ── */}
+        {/* ── Compartida: Perfil (incluye Conexiones como sub-pestaña) ── */}
         {page === 'profile' && (
           <ProfilePage user={user} onSignOut={handleSignOut} />
         )}
@@ -290,20 +283,16 @@ export default function App() {
         >
           {bottomTabs.map(tab => {
             const isActive = page === tab.id
-            const showBadge = tab.id === 'notes' && hasNewNotes && !isActive
             return (
               <button
                 key={tab.id}
                 onClick={() => setPage(tab.id)}
                 className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5"
               >
-                <span className={`relative text-lg leading-none rounded-lg w-9 h-7 flex items-center justify-center ${
+                <span className={`text-lg leading-none rounded-lg w-9 h-7 flex items-center justify-center ${
                   isActive ? 'bg-gray-900 text-white' : 'text-gray-400'
                 }`}>
                   {tab.icon}
-                  {showBadge && (
-                    <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full" />
-                  )}
                 </span>
                 <span className={`text-[10px] font-medium ${
                   isActive ? 'text-gray-900' : 'text-gray-400'
