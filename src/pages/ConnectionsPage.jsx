@@ -15,6 +15,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { RoutineDetail } from './RoutinesPage'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar,
   Tooltip, ResponsiveContainer,
 } from 'recharts'
 
@@ -374,7 +375,7 @@ function TrainerSection({ user, hideLink = false }) {
 //     with check (auth.uid() = trainer_id);
 
 function ClientDetailView({ client, trainer, onBack }) {
-  const [tab, setTab] = useState('history') // 'history' | 'progress' | 'notes'
+  const [tab, setTab] = useState('history') // 'history' | 'progress' | 'routines' | 'notes' | 'activity'
 
   return (
     <div>
@@ -397,6 +398,7 @@ function ClientDetailView({ client, trainer, onBack }) {
           { id: 'history',  label: 'Historial' },
           { id: 'progress', label: 'Progreso'  },
           { id: 'routines', label: 'Rutinas'   },
+          { id: 'activity', label: 'Actividad' },
           { id: 'notes',    label: 'Notas'     },
         ].map(t => (
           <button
@@ -416,6 +418,7 @@ function ClientDetailView({ client, trainer, onBack }) {
       {tab === 'history'  && <ClientHistory  clientId={client.id} />}
       {tab === 'progress' && <ClientProgress clientId={client.id} />}
       {tab === 'routines' && <ClientRoutines clientId={client.id} trainerId={trainer.id} />}
+      {tab === 'activity' && <ClientActivity clientId={client.id} />}
       {tab === 'notes'    && <ClientNotes    clientId={client.id} trainerId={trainer.id} />}
     </div>
   )
@@ -865,6 +868,113 @@ function RoutineRow({ r, onEdit, onDelete }) {
         }`}>
         {confirmDelete ? '¿Eliminar?' : '×'}
       </button>
+    </div>
+  )
+}
+
+// ─── Sub-vista: actividad diaria del cliente (solo lectura) ─────────────────
+
+function activityFormatDate(dateStr) {
+  const [, month, day] = dateStr.split('-').map(Number)
+  const months = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+  return `${day} ${months[month - 1]}`
+}
+
+function ClientActivity({ clientId }) {
+  const [days, setDays]       = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase
+        .from('daily_activity')
+        .select('id, date, steps, activity_logs(id, type, duration_min)')
+        .eq('user_id', clientId)
+        .order('date', { ascending: false })
+        .limit(30)
+      setDays(data || [])
+      setLoading(false)
+    }
+    load()
+  }, [clientId])
+
+  if (loading) return <div className="p-8 text-center text-gray-400">Cargando actividad...</div>
+
+  if (days.length === 0) {
+    return <div className="p-8 text-center text-gray-400">Sin actividad registrada todavía.</div>
+  }
+
+  const chartData = [...days]
+    .filter(d => d.steps != null)
+    .slice(0, 7)
+    .reverse()
+    .map(d => ({ date: activityFormatDate(d.date), steps: d.steps }))
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Gráfica semanal de pasos */}
+      {chartData.length >= 2 && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">
+            Pasos — últimos 7 días
+          </p>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: '#9ca3af' }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: '#9ca3af' }}
+                tickLine={false}
+                axisLine={false}
+                width={40}
+              />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  return (
+                    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-md text-xs">
+                      <p className="font-medium text-gray-700 mb-0.5">{label}</p>
+                      <p className="text-gray-900">Pasos: <span className="font-bold">{payload[0].value?.toLocaleString()}</span></p>
+                    </div>
+                  )
+                }}
+              />
+              <Bar dataKey="steps" fill="#111827" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Lista de días */}
+      <div className="flex flex-col gap-2">
+        {days.map(d => (
+          <div key={d.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">{activityFormatDate(d.date)}</span>
+              {d.steps != null && (
+                <span className="text-sm text-gray-500">{d.steps.toLocaleString()} pasos</span>
+              )}
+            </div>
+            {d.activity_logs?.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {d.activity_logs.map(a => (
+                  <span
+                    key={a.id}
+                    className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full"
+                  >
+                    {a.type}{a.duration_min ? ` ${a.duration_min}min` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
