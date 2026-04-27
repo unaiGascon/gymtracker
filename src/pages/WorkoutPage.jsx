@@ -5,14 +5,19 @@
 //
 // Borrador en localStorage:
 //   - Clave: "workout_draft_{routineId}"
-//   - Valor: JSON con { exercise_id: [{reps, weight}, ...] }
-//   - Se actualiza en cada cambio de input
+//   - Valor: JSON con { exercise_id: [{reps, weight, confirmed}, ...] }
+//   - Se actualiza en cada cambio de input y al confirmar una serie
 //   - Se carga al montar si existe (sesión interrumpida)
 //   - Se elimina al finalizar el entrenamiento
 //
+// Confirmación de serie (botón cuarta columna):
+//   - Cada serie tiene un botón que muestra el dato anterior ("11r × 35") o "✓" si es nuevo
+//   - Al pulsarlo: arranca el temporizador de descanso (excepto última serie) y queda marcado
+//   - Una vez marcado no se puede volver a pulsar — evita reiniciar el timer accidentalmente
+//   - El estado confirmed se guarda en el borrador de localStorage
+//
 // Temporizador de descanso:
-//   - Se arranca al completar una serie (blur en el input de peso con ambos campos rellenos)
-//   - Solo si no es la última serie del ejercicio
+//   - Solo se arranca desde el botón de confirmación de serie
 //   - Duración leída desde profiles.rest_seconds (default 90s)
 //   - Tipo de aviso leído desde profiles.rest_alert: 'vibrate' | 'sound' | 'both' (default 'both')
 //   - Si rest_seconds = 0, el temporizador está desactivado
@@ -142,7 +147,7 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
     for (const re of reData) {
       if (re.duration_min) continue
       const numSets = re.sets || 3
-      initSets[re.exercise_id] = Array.from({ length: numSets }, () => ({ reps: '', weight: '' }))
+      initSets[re.exercise_id] = Array.from({ length: numSets }, () => ({ reps: '', weight: '', confirmed: false }))
     }
 
     // Comprobar si hay un borrador guardado en localStorage para esta rutina
@@ -155,7 +160,8 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
           if (!initSets[exerciseId]) continue
           draft[exerciseId].forEach((s, idx) => {
             if (initSets[exerciseId][idx]) {
-              initSets[exerciseId][idx] = s
+              // confirmed: false como fallback para borradores guardados antes de esta versión
+              initSets[exerciseId][idx] = { confirmed: false, ...s }
             }
           })
         }
@@ -231,10 +237,10 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   }
 
   // Arranca el temporizador de descanso con el tiempo configurado en el perfil.
+  // Si ya hay un temporizador activo, lo reinicia desde el principio.
   // label: texto informativo con la siguiente serie (ej: "Serie 2 · Press banca")
   function startRest(label) {
     if (restSeconds <= 0) return   // temporizador desactivado
-    if (restTimer !== null) return // ya está corriendo — no reiniciar
     clearInterval(timerRef.current)
     setRestTimer({ left: restSeconds, total: restSeconds, label })
     timerRef.current = setInterval(() => {
@@ -336,7 +342,7 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   }
 
   return (
-    <div className="p-4 pb-28">
+    <div className="p-4">
       {/* Cabecera */}
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -375,8 +381,8 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
         />
       )}
 
-      {/* Botón "Finalizar" fijo abajo */}
-      <div className="fixed bottom-0 left-0 right-0 px-4 py-3 bg-white border-t border-gray-200">
+      {/* Botón "Finalizar" — al final del contenido, requiere scroll hasta abajo */}
+      <div className="mt-6 mb-8">
         <button
           onClick={() => setShowConfirm(true)}
           disabled={saving}
@@ -410,7 +416,7 @@ function RestTimer({ secondsLeft, total, label, onSkip }) {
   const pct     = (secondsLeft / total) * 100  // 100% al inicio, 0% al final
 
   return (
-    <div className="fixed bottom-[76px] left-0 right-0 px-4 z-40">
+    <div className="fixed bottom-4 left-0 right-0 px-4 z-40">
       <div className="bg-gray-900 text-white rounded-2xl p-5 shadow-2xl">
         {/* Cuenta atrás con número grande */}
         <div className="text-center mb-3">
@@ -542,33 +548,32 @@ function toEmbedUrl(url) {
 // ExerciseCard: nombre del ejercicio + contenido según tipo
 // ─────────────────────────────────────────────
 function ExerciseCard({ re, prevSets, currSets, onUpdate, onRestStart }) {
-  const exercise  = re.exercises
-  const isTimed   = !!re.duration_min
-  const allFilled = !isTimed && currSets.length > 0 && currSets.every(s => s.reps !== '' && s.weight !== '')
+  const exercise    = re.exercises
+  const isTimed     = !!re.duration_min
+  // El ejercicio se marca como completado cuando todas sus series están confirmadas
+  const allConfirmed = !isTimed && currSets.length > 0 && currSets.every(s => s.confirmed)
 
-  // Toggle para mostrar/ocultar el iframe de YouTube
   const [showVideo, setShowVideo] = useState(false)
-  // LOG temporal para verificar que video_url llega desde Supabase
-  console.log('ejercicio:', exercise?.name, '| video_url:', exercise?.video_url)
   const embedUrl = toEmbedUrl(exercise?.video_url)
 
-  // Llamado desde SetRow al hacer blur con la serie completa (reps + peso rellenos).
-  // Si no es la última serie, arranca el temporizador de descanso.
-  function handleSetFilled(setIndex) {
+  // Llamado al pulsar el botón de confirmación de una serie.
+  // Persiste confirmed=true en el borrador y arranca el descanso (excepto en la última serie).
+  function handleConfirmSet(setIndex) {
+    onUpdate(re.exercise_id, setIndex, 'confirmed', true)
     const isLastSet = setIndex === currSets.length - 1
-    if (isLastSet) return  // no hay descanso tras la última serie
-    const nextNum = setIndex + 2  // setIndex es 0-based; siguiente serie en número legible
-    onRestStart?.(`Serie ${nextNum} · ${exercise?.name ?? ''}`)
+    if (!isLastSet) {
+      const nextNum = setIndex + 2
+      onRestStart?.(`Serie ${nextNum} · ${exercise?.name ?? ''}`)
+    }
   }
 
   return (
-    <div className={`px-3 py-3 transition-opacity ${allFilled ? 'opacity-40' : 'opacity-100'}`}>
+    <div className={`px-3 py-3 transition-opacity ${allConfirmed ? 'opacity-40' : 'opacity-100'}`}>
       <div className="flex items-baseline gap-2 mb-2">
         <span className="font-semibold text-sm">{exercise?.name}</span>
         {exercise?.muscle_group && (
           <span className="text-xs text-gray-400">{exercise.muscle_group}</span>
         )}
-        {/* Botón "▶ Ver vídeo" — solo si el ejercicio tiene URL de YouTube válida */}
         {embedUrl && (
           <button
             onClick={() => setShowVideo(v => !v)}
@@ -605,7 +610,7 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate, onRestStart }) {
             <span className="text-center">#</span>
             <span className="text-center">Reps</span>
             <span className="text-center">Peso</span>
-            <span className="text-center">Anterior</span>
+            <span className="text-center">✓</span>
           </div>
           {currSets.map((set, i) => (
             <SetRow
@@ -616,9 +621,9 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate, onRestStart }) {
               weight={set.weight}
               prevSet={prevSets.find(p => p.set_number === i + 1)}
               exerciseId={re.exercise_id}
-              isLastSet={i === currSets.length - 1}
+              confirmed={set.confirmed ?? false}
               onUpdate={onUpdate}
-              onSetFilled={handleSetFilled}
+              onConfirm={handleConfirmSet}
             />
           ))}
         </>
@@ -676,23 +681,21 @@ function ConfirmFinishModal({ currentSets, exercises, saving, onConfirm, onCance
 }
 
 // ─────────────────────────────────────────────
-// SetRow: una serie — número, input reps, input peso, dato anterior
+// SetRow: una serie — número, input reps, input peso, botón de confirmación
+//
+// El botón (cuarta columna):
+//   - Sin confirmar: muestra el dato anterior ("11r × 35") o "✓" si no hay historial
+//   - Al pulsar: llama a onConfirm, que marca la serie y arranca el descanso
+//   - Confirmado: fondo negro, "✓", deshabilitado (no se puede pulsar de nuevo)
 // ─────────────────────────────────────────────
-function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, isLastSet, onUpdate, onSetFilled }) {
+function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, confirmed, onUpdate, onConfirm }) {
   const beatsReps   = prevSet && reps   !== '' && parseInt(reps)     > prevSet.reps_done
   const beatsWeight = prevSet && weight !== '' && parseFloat(weight) > prevSet.weight_done
 
-  const prevText = prevSet
+  // Label del botón antes de confirmar: dato anterior o "✓" si es ejercicio nuevo
+  const confirmLabel = prevSet
     ? `${prevSet.reps_done ?? '?'}r × ${prevSet.weight_done ?? '?'}`
-    : '—'
-
-  // Al salir del input de peso, si ambos campos están rellenos y no es la última serie
-  // → notificar a ExerciseCard para arrancar el temporizador de descanso
-  function handleWeightBlur() {
-    if (!isLastSet && reps !== '' && weight !== '') {
-      onSetFilled?.(setIndex)
-    }
-  }
+    : '✓'
 
   return (
     <div className="grid grid-cols-[1.5rem_1fr_1fr_4rem] gap-2 items-center mb-1.5">
@@ -716,14 +719,24 @@ function SetRow({ setIndex, setNumber, reps, weight, prevSet, exerciseId, isLast
           placeholder="—"
           value={weight}
           onChange={e => onUpdate(exerciseId, setIndex, 'weight', e.target.value)}
-          onBlur={handleWeightBlur}
           className={`w-full border rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:ring-1
             ${beatsWeight ? 'border-green-400 text-green-700 bg-green-50 focus:ring-green-400' : 'border-gray-300 focus:ring-gray-400'}`}
         />
         {beatsWeight && <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-green-500 text-xs font-bold pointer-events-none">↑</span>}
       </div>
 
-      <span className="text-xs text-gray-400 text-center leading-tight">{prevText}</span>
+      {/* Botón de confirmación — una vez pulsado queda bloqueado en negro */}
+      <button
+        onClick={() => onConfirm(setIndex)}
+        disabled={confirmed}
+        className={`text-xs font-medium rounded-lg h-8 w-full transition-colors ${
+          confirmed
+            ? 'bg-gray-900 text-white cursor-default'
+            : 'bg-gray-100 text-gray-500 hover:bg-gray-200 active:bg-gray-300'
+        }`}
+      >
+        {confirmed ? '✓' : confirmLabel}
+      </button>
     </div>
   )
 }
