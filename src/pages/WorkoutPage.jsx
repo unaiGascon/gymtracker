@@ -237,10 +237,11 @@ export default function WorkoutPage({ user, routineId, routineName, onFinish, on
   }
 
   // Arranca el temporizador de descanso con el tiempo configurado en el perfil.
-  // Si ya hay un temporizador activo, lo reinicia desde el principio.
+  // Si ya hay un temporizador activo, ignora la llamada — no reinicia.
   // label: texto informativo con la siguiente serie (ej: "Serie 2 · Press banca")
   function startRest(label) {
-    if (restSeconds <= 0) return   // temporizador desactivado
+    if (restSeconds <= 0) return        // temporizador desactivado
+    if (restTimer !== null) return      // ya está corriendo — no reiniciar
     clearInterval(timerRef.current)
     setRestTimer({ left: restSeconds, total: restSeconds, label })
     timerRef.current = setInterval(() => {
@@ -557,8 +558,11 @@ function ExerciseCard({ re, prevSets, currSets, onUpdate, onRestStart }) {
   const embedUrl = toEmbedUrl(exercise?.video_url)
 
   // Llamado al pulsar el botón de confirmación de una serie.
+  // Requiere reps Y peso informados; si falta alguno, ignora la pulsación.
   // Persiste confirmed=true en el borrador y arranca el descanso (excepto en la última serie).
   function handleConfirmSet(setIndex) {
+    const set = currSets[setIndex]
+    if (!set || set.reps === '' || set.weight === '') return  // serie incompleta — no confirmar
     onUpdate(re.exercise_id, setIndex, 'confirmed', true)
     const isLastSet = setIndex === currSets.length - 1
     if (!isLastSet) {
