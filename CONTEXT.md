@@ -13,12 +13,15 @@
 
 ---
 
-## Versión actual: v8 — temporizador de descanso entre series
-
-Temporizador de descanso entre series implementado en WorkoutPage.
-Configurable desde ProfilePage (campo `rest_seconds` en `profiles`).
+## Versión actual: v9 — navegación reorganizada + notas + actividad del cliente
 
 **La app está desplegada en Vercel y funciona en producción.**
+
+Cambios en v9:
+- Navegación reorganizada en 4 tabs de cliente (Inicio | Rutinas | Progreso | Perfil) y 3 de entrenador (Mis clientes | Plantillas | Perfil). Historial, Actividad y Conexiones son sub-pestañas.
+- `trainer_notes` añade campo `is_private`: entrenador puede marcar notas como privadas o compartidas. `NotesPage` muestra al cliente solo las compartidas.
+- Entrenador puede ver la actividad diaria (pasos + actividades) de cada cliente desde su ficha.
+- `WorkoutPage`: columna "Anterior" reemplazada por botón de confirmación de serie. Temporizador solo se dispara desde ese botón. "Finalizar" ya no es flotante.
 
 ---
 
@@ -49,11 +52,13 @@ Cliente Supabase exportado desde `src/lib/supabase.js`.
 Perfil de cada usuario autenticado (creado automáticamente al registrarse).
 ```sql
 create table profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id           uuid primary key references auth.users(id) on delete cascade,
   display_name text,
-  name text,
-  is_trainer boolean default false,  -- activa la sección "Soy entrenador" en Conexiones
-  created_at timestamptz default now()
+  name         text,
+  is_trainer   boolean default false,   -- activa el modo entrenador
+  rest_seconds int     default 90,      -- duración del temporizador de descanso (0 = desactivado)
+  rest_alert   text    default 'both',  -- 'vibrate' | 'sound' | 'both'
+  created_at   timestamptz default now()
 );
 ```
 
@@ -69,7 +74,7 @@ create table admins (
 Relación entre un entrenador y su cliente.
 ```sql
 create table trainer_connections (
-  id uuid primary key default gen_random_uuid(),
+  id         uuid primary key default gen_random_uuid(),
   trainer_id uuid references auth.users(id) on delete cascade,
   client_id  uuid references auth.users(id) on delete cascade,
   created_at timestamptz default now()
@@ -80,24 +85,31 @@ create table trainer_connections (
 Notas del entrenador sobre un cliente.
 ```sql
 create table trainer_notes (
-  id uuid primary key default gen_random_uuid(),
+  id         uuid primary key default gen_random_uuid(),
   trainer_id uuid references auth.users(id) on delete cascade,
   client_id  uuid references auth.users(id) on delete cascade,
   content    text,
+  is_private boolean not null default false,  -- true = solo el entrenador la ve; false = compartida con el cliente
   created_at timestamptz default now()
 );
 ```
+
+> **Pendiente de aplicar en Supabase:**
+> ```sql
+> alter table trainer_notes add column if not exists is_private boolean not null default false;
+> ```
+> Y las políticas RLS correspondientes para que el cliente solo lea notas con `is_private = false`.
 
 ### `exercises`
 Catálogo de ejercicios. Gestionable desde la app (pantalla Rutinas → Ejercicios).
 ```sql
 create table exercises (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade,
-  name text not null,
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid references auth.users(id) on delete cascade,
+  name        text not null,
   muscle_group text,
   description text,
-  created_by uuid references auth.users(id)  -- null = ejercicio del sistema; uuid = creado por ese usuario
+  created_by  uuid references auth.users(id)  -- null = ejercicio del sistema; uuid = creado por ese usuario
 );
 ```
 
@@ -105,11 +117,11 @@ create table exercises (
 Las rutinas disponibles. Tienen un campo `order` para el ciclo semanal.
 ```sql
 create table routines (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade,
-  name text not null,
-  notes text,
-  "order" int,          -- orden en el ciclo (1, 2, 3...)
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid references auth.users(id) on delete cascade,
+  name       text not null,
+  notes      text,
+  "order"    int,          -- orden en el ciclo (1, 2, 3...)
   created_at timestamptz default now()
 );
 ```
@@ -118,16 +130,16 @@ create table routines (
 Qué ejercicios tiene cada rutina, en qué bloque y en qué orden.
 ```sql
 create table routine_exercises (
-  id uuid primary key default gen_random_uuid(),
-  routine_id uuid references routines(id) on delete cascade,
-  exercise_id uuid references exercises(id) on delete cascade,
-  block text not null,    -- 'warmup' | 'main' | 'cardio' | 'cooldown'
-  sets int,
-  reps int,
-  weight_kg float,
-  duration_min int,       -- para ejercicios por tiempo (cardio, movilidad...)
-  "order" int,
-  superset_group text     -- nullable: mismo valor = superserie
+  id            uuid primary key default gen_random_uuid(),
+  routine_id    uuid references routines(id) on delete cascade,
+  exercise_id   uuid references exercises(id) on delete cascade,
+  block         text not null,    -- 'warmup' | 'main' | 'cardio' | 'cooldown'
+  sets          int,
+  reps          int,
+  weight_kg     float,
+  duration_min  int,              -- para ejercicios por tiempo (cardio, movilidad...)
+  "order"       int,
+  superset_group text             -- nullable: mismo valor = superserie
 );
 ```
 
@@ -135,12 +147,12 @@ create table routine_exercises (
 Registro de cada sesión completada.
 ```sql
 create table workout_logs (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade,
-  routine_id uuid references routines(id),
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid references auth.users(id) on delete cascade,
+  routine_id  uuid references routines(id),
   logged_date date default current_date,
-  notes text,
-  completed boolean default true  -- siempre true; los borradores van en localStorage
+  notes       text,
+  completed   boolean default true  -- siempre true; los borradores van en localStorage
 );
 ```
 
@@ -148,11 +160,11 @@ create table workout_logs (
 Series reales registradas en cada sesión.
 ```sql
 create table log_sets (
-  id uuid primary key default gen_random_uuid(),
-  log_id uuid references workout_logs(id) on delete cascade,
+  id          uuid primary key default gen_random_uuid(),
+  log_id      uuid references workout_logs(id) on delete cascade,
   exercise_id uuid references exercises(id),
-  set_number int,
-  reps_done int,
+  set_number  int,
+  reps_done   int,
   weight_done float
 );
 ```
@@ -208,16 +220,18 @@ src/
   lib/
     supabase.js                — cliente Supabase (importar en páginas)
   pages/
-    HomePage.jsx               — pantalla de inicio, elige rutina
-    WorkoutPage.jsx            — entrenamiento activo
-    HistoryPage.jsx            — historial de sesiones
-    RoutinesPage.jsx           — gestión de rutinas y catálogo de ejercicios
-    ProgressPage.jsx           — progreso por ejercicio (gráfica PS + tabla)
+    HomePage.jsx               — pantalla de inicio, elige rutina; banner de notas nuevas
+    WorkoutPage.jsx            — entrenamiento activo con confirmación de series
+    HistoryPage.jsx            — historial de sesiones (onBack opcional: sub-tab o pantalla)
+    RoutinesPage.jsx           — Mis rutinas | Ejercicios | Historial (sub-pestañas)
+    ProgressPage.jsx           — Progreso | Actividad (sub-pestañas)
+    ActivityPage.jsx           — registro de pasos y actividades extra (sub-pestaña de Progreso)
     LoginPage.jsx              — email/contraseña + Google OAuth
     RegisterPage.jsx           — nombre, email, contraseña + Google OAuth
-    ConnectionsPage.jsx        — gestión de conexiones entrenador-cliente
+    ConnectionsPage.jsx        — conexiones entrenador-cliente + ficha de cliente con actividad
     AcceptConnectionPage.jsx   — página pública /connect?token=... para aceptar invitaciones
-    ProfilePage.jsx            — perfil del usuario: nombre, email, toggle is_trainer, cerrar sesión
+    ProfilePage.jsx            — Mi perfil | Conexiones (sub-pestañas)
+    NotesPage.jsx              — notas compartidas del entrenador (solo lectura, cliente)
   App.jsx                      — navegación principal + detección de ruta /connect
   index.css                    — solo @import "tailwindcss"
   main.jsx                     — punto de entrada
@@ -231,26 +245,37 @@ vercel.json                    — rewrite /* → /index.html para SPA routing
 ```
 /connect?token=...  →  AcceptConnectionPage (pública, sin sesión requerida)
 
-HomePage
-  └─→ WorkoutPage (recibe routineId + routineName como props)
-        └─→ (fin) → HistoryPage
-        └─→ (atrás) → HomePage
+MODO CLIENTE — 4 pestañas principales:
+  Inicio      → HomePage
+                  └─→ WorkoutPage (recibe routineId + routineName)
+                        └─→ (fin) → RoutinesPage
+                        └─→ (atrás) → HomePage
+                  └─→ NotesPage (desde banner de notas nuevas)
+  Rutinas     → RoutinesPage   (sub-tabs: Mis rutinas | Ejercicios | Historial)
+  Progreso    → ProgressPage   (sub-tabs: Progreso | Actividad)
+  Perfil      → ProfilePage    (sub-tabs: Mi perfil | Conexiones)
 
-Navegación adaptativa:
-  - PC (≥768px): barra superior [Inicio][Historial][Rutinas][Progreso][Conexiones][Perfil]
-  - Móvil (<768px): barra inferior fija [⌂ Inicio][◷ Historial][☰ Rutinas][↗ Progreso][◯ Perfil]
-  (ambas barras se ocultan durante un entrenamiento activo)
-  (el botón "Salir" está dentro de ProfilePage, no en la nav)
-  ("Conexiones" solo aparece en la barra de PC; en móvil se accede desde Perfil o añadiendo tab)
+MODO ENTRENADOR — 3 pestañas principales:
+  Mis clientes → ConnectionsPage (trainerOnly=true)
+  Plantillas   → RoutinesPage    (defaultTab="templates")
+  Perfil       → ProfilePage     (sub-tabs: Mi perfil | Conexiones)
 ```
 
-`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'history' | 'routines' | 'progress' | 'connections' | 'profile'), `routineId`, `routineName`.
-Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
+`App.jsx` gestiona el estado de navegación: `page` ('home' | 'workout' | 'routines' | 'progress' | 'profile' | 'clients' | 'templates' | 'notes' | 'history').
+- Modo cliente: tabs `[home, routines, progress, profile]`
+- Modo entrenador: tabs `[clients, templates, profile]`
+- `isTrainer` cargado del perfil al iniciar sesión; al cambiar el toggle → `window.location.reload()` para aplicar la navegación correcta.
+- Detección de `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 
 **Recuperación de entrenamiento activo tras recarga:**
-- `WorkoutPage` guarda `activeRoutineId` y `activeRoutineName` en localStorage al montar; los borra al finalizar
-- `App.jsx` inicializa `page` y `routineId` con lazy initializer desde localStorage → arranca directamente en `WorkoutPage` si había entrenamiento en curso
-- `HomePage` muestra un banner negro "Entrenamiento en curso →" si existe `activeRoutineId` (para cuando el usuario volvió atrás manualmente)
+- `WorkoutPage` guarda `activeRoutineId` y `activeRoutineName` en localStorage al montar; los borra al finalizar.
+- `App.jsx` inicializa `page` y `routineId` con lazy initializer desde localStorage → arranca directamente en `WorkoutPage` si había entrenamiento en curso.
+- `HomePage` muestra un banner negro "Entrenamiento en curso →" si existe `activeRoutineId`.
+
+**Notificación de notas nuevas:**
+- Al cargar perfil de cliente, `checkNewNotes()` compara `trainer_notes` más recientes que `notesLastVisited` en localStorage.
+- Si hay notas nuevas, `HomePage` muestra banner azul "Tu entrenador ha dejado notas nuevas →" → navega a `NotesPage`.
+- `NotesPage` actualiza `notesLastVisited` al montar.
 
 ---
 
@@ -261,7 +286,8 @@ Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 - Determina qué rutina toca hoy: busca el último `workout_log`, toma la rutina siguiente en el ciclo (wrap-around). Sin historial → la primera.
 - Resalta la rutina del día con fondo negro + badge "Hoy"
 - Todas las rutinas son clicables para elegir cualquiera
-- Banner "Entrenamiento en curso →" si `localStorage.activeRoutineId` existe (entrenamiento no finalizado)
+- Banner negro "Entrenamiento en curso →" si `localStorage.activeRoutineId` existe
+- Banner azul "Tu entrenador ha dejado notas nuevas →" si `hasNewNotes = true` (props)
 
 ### WorkoutPage (`src/pages/WorkoutPage.jsx`)
 - Recibe `routineId` y `routineName` como props
@@ -269,117 +295,118 @@ Detecta `/connect?token=...` via `URLSearchParams` antes de evaluar la sesión.
 - Ejercicios con `duration_min`: muestra "X min", sin inputs
 - Ejercicios con `sets`+`reps`: inputs de reps y peso por serie
 - **Borrador en localStorage** (clave `workout_draft_{routineId}`):
-  - Cada cambio de input persiste el estado completo
-  - Al montar, si existe borrador se carga en los inputs con etiqueta "Retomando sesión guardada"
+  - Cada cambio de input persiste el estado completo, incluyendo campo `confirmed` por serie
+  - Al montar, si existe borrador se carga (merge backward-compatible con `{ confirmed: false, ...s }`)
   - Al finalizar, se guarda en Supabase y se elimina el borrador
-- Columna "Anterior": series del último `workout_log` completado para ese ejercicio (verde + ↑ si supera)
-- Superseries: barra lateral morada 4px, etiqueta "SUPERSERIE"
-- Ejercicios completados (todos los inputs rellenos): `opacity-40`
-- Botón "Finalizar entrenamiento" fijo abajo: abre modal de confirmación
-- **Modal de confirmación** (`ConfirmFinishModal`): muestra ejercicios completados y series registradas; "Sí, finalizar" guarda, "Cancelar" vuelve al entrenamiento
+- **Columna "✓" — botón de confirmación de serie:**
+  - Muestra el dato previo ("11r × 35") o "✓" si no hay historial anterior
+  - Al pulsar: valida que reps Y peso estén rellenos; si no, ignora
+  - Marca la serie como `confirmed: true` (fondo negro, bloqueado)
+  - Lanza el temporizador de descanso (si no está ya corriendo)
+  - Si es la última serie del ejercicio, no lanza el temporizador
+- **Ejercicio completado:** `allConfirmed` → `opacity-40`
+- **Botón "Finalizar entrenamiento"** al final del listado (no flotante): abre modal de confirmación
+- **Modal de confirmación** (`ConfirmFinishModal`): muestra ejercicios completados y series registradas; "Sí, finalizar" guarda, "Cancelar" vuelve
 - Pantalla de confirmación tras guardar con "Volver al inicio" y "Ver historial"
-- **Temporizador de descanso** (`RestTimer`): panel flotante negro al completar una serie
-  - Trigger: blur en input de peso con reps + peso rellenos y no es la última serie
+- **Temporizador de descanso** (`RestTimer`): panel negro en esquina inferior izquierda
+  - Solo se lanza desde el botón de confirmación de serie
+  - No se reinicia si ya está corriendo (pulsar otro botón de serie no lo reinicia)
   - Cuenta atrás grande + barra de progreso + "Siguiente: Serie X · Ejercicio"
-  - Al llegar a 0: `navigator.vibrate([200,100,200])` + beep Web Audio API
+  - Al llegar a 0: `navigator.vibrate` + beep Web Audio API (según `rest_alert`)
   - Botón "Saltar descanso" para cancelar manualmente
-  - Duración leída desde `profiles.rest_seconds` (default 90s); 0 = desactivado
+  - Duración desde `profiles.rest_seconds` (default 90s); 0 = desactivado
 
 ### HistoryPage (`src/pages/HistoryPage.jsx`)
 - Lista de `workout_logs` con `routines(name)` y conteo de ejercicios únicos, ordenados por fecha desc
 - Fecha formateada como "mié 15 ene" (parseada como fecha local, sin desfase de zona horaria)
 - Clic en sesión → detalle con `log_sets` + `exercises(name, muscle_group)`, agrupados por ejercicio
-- Botón `←` para volver al inicio
+- Botón `←` solo visible si se pasa la prop `onBack` (funciona como sub-tab en Rutinas sin back button)
 
 ### RoutinesPage (`src/pages/RoutinesPage.jsx`)
-Dos secciones con pestañas internas ("Rutinas" / "Ejercicios"):
+Tres sub-pestañas: **Mis rutinas** | **Ejercicios** | **Historial**
 
-**Sección Rutinas — lista (`RoutineList`):**
+**Mis rutinas (lista + detalle):**
 - Clic en nombre de rutina → expande panel con "Ver ejercicios" / "Editar"
-- "Ver ejercicios" → entra al detalle de la rutina
-- "Editar" → formulario inline para cambiar nombre y orden en el ciclo
-- Botones ↑↓ para reordenar intercambiando el campo `order` con la adyacente
-- Botón × con doble confirmación para eliminar
-- Formulario al pie para crear rutina nueva (nombre + orden)
+- Botones ↑↓ para reordenar rutinas; formulario para crear rutina nueva
+- Detalle: ejercicios agrupados por bloque, editar/eliminar/reordenar, añadir con filtro por músculo
+- Superseries: "Unir / Separar superserie" entre ejercicios consecutivos del mismo bloque
 
-**Sección Rutinas — detalle (`RoutineDetail`):**
-- Ejercicios agrupados por bloque con configuración resumida
-- Botones ↑↓ para reordenar dentro del bloque
-- Botón "Editar" por ejercicio → formulario inline (sets/reps/peso o duration_min)
-- Botón × para eliminar ejercicio
-- Botón "Unir / Separar superserie" entre ejercicios consecutivos del mismo bloque
-- Formulario "Añadir ejercicio": filtro por músculo, selector de ejercicio, bloque, sets/reps/peso o duration_min
+**Ejercicios:**
+- Catálogo con diferenciación propios/sistema (badge "Mío"/"Sistema", fondo morado/blanco)
+- Filtro pills "Todos" / "Solo míos"; editar/eliminar solo en propios con doble confirmación
+- Crear ejercicio: nombre, grupo muscular (9 opciones), descripción opcional
 
-**Sección Ejercicios (`ExerciseList`):**
-- Lista del catálogo con nombre, grupo muscular y descripción
-- Ejercicios propios (`created_by = user.id`): fondo morado suave + badge "Mío"
-- Ejercicios del sistema (`created_by = null`): fondo blanco + badge "Sistema"
-- Filtro pills "Todos" / "Solo míos" sobre la lista
-- Botones Editar/Eliminar solo visibles en ejercicios propios
-- Eliminar con doble confirmación (primer clic → "¿Eliminar?", segundo → borra)
-- Crear ejercicio: nombre, grupo muscular (select con 9 opciones), descripción opcional; guarda `created_by = user.id`
-- Editar ejercicio existente (mismos campos, sin cambiar `created_by`)
+**Historial:**
+- Embebe `HistoryPage` sin `onBack` (sin botón de volver, es sub-pestaña)
 
-**Catálogo en RoutineDetail (al añadir ejercicio):**
-- Filtro por grupo muscular (select)
-- Toggle pills "Todos" / "Solo míos" que filtra por `created_by = user.id`
+**Modo plantillas** (`defaultTab="templates"`):
+- Solo visible para entrenadores (tab "Plantillas" en el modo entrenador)
+- Misma UI que "Mis rutinas" pero gestionando plantillas del entrenador
 
 ### ProgressPage (`src/pages/ProgressPage.jsx`)
-Dos pestañas principales: **Ejercicios** | **Actividad**
+Dos sub-pestañas: **Progreso** | **Actividad**
 
-**Pestaña Ejercicios:**
-- Lista de ejercicios que el usuario ha entrenado al menos una vez (de `log_sets`, no del catálogo)
-- Clic en ejercicio → vista de detalle con gráfica y tabla
-- **Performance Score (PS)** por sesión:
-  - `peso_max` = máximo `weight_done` de esa sesión
-  - `mejor_serie_reps` = `reps_done` de la serie con mayor peso
-  - `volumen_total` = Σ(`reps_done` × `weight_done`) de todas las series
-  - `PS = (peso_max × mejor_serie_reps) + (volumen_total × 0.1)`
-- Gráfica de línea (recharts): eje X con fechas, eje Y con PS, tooltip al pasar por punto
-- Tabla debajo con sesiones en orden descendente: fecha, peso máx, volumen, PS
-- Requiere mínimo 2 sesiones para mostrar la gráfica
+**Progreso (lista + detalle):**
+- Lista de ejercicios entrenados al menos una vez
+- Detalle: gráfica de línea (recharts) con Performance Score por sesión
+- `PS = (peso_max × mejor_serie_reps) + (volumen_total × 0.1)`
+- Tabla debajo: fecha, peso máx, volumen, PS. Requiere mínimo 2 sesiones.
+- Sub-pestañas se ocultan al entrar en el detalle de un ejercicio
 
-**Pestaña Actividad — sub-pestaña "Hoy":**
-- Muestra la fecha actual en formato largo (ej: "martes 15 de abril")
-- Tarjeta de pasos: input numérico + botón "Guardar" → upsert en `daily_activity` (crea si no existe, actualiza si ya hay)
-- Tarjeta de actividades extra: lista de `activity_logs` del día con tipo, duración y notas
-- Botón "× Añadir" despliega formulario inline: tipo (select: Running, Ciclismo, Natación, Senderismo, Otra), duración en minutos, notas opcionales
-- `ensureDailyActivity()` crea el registro diario si no existe antes de insertar actividad
-- Botón × para eliminar cualquier actividad registrada
+**Actividad:**
+- Embebe `ActivityPage` con pasos diarios y actividades extra (sub-tabs: Hoy | Historial)
 
-**Pestaña Actividad — sub-pestaña "Historial":**
-- Carga los últimos 30 días de `daily_activity` con sus `activity_logs` anidados
-- Gráfica de barras (recharts) con los pasos de los últimos 7 días (solo si ≥ 2 días con datos)
-- Lista de días con pasos a la derecha y actividades como pills (ej: "Running 30min")
+### ActivityPage (`src/pages/ActivityPage.jsx`)
+- **Hoy**: registro de pasos (upsert en `daily_activity`) + actividades extra (running, ciclismo…)
+- **Historial**: últimos 30 días con gráfica de barras de pasos (últimos 7 días) + lista con pills
 
 ### ConnectionsPage (`src/pages/ConnectionsPage.jsx`)
-Carga `is_trainer` del perfil al montar:
-- `is_trainer = false` → muestra solo "Soy cliente" sin pestañas
-- `is_trainer = true` → muestra pestañas "Soy cliente" / "Soy entrenador"
+En modo entrenador (`trainerOnly=true` desde la tab "Mis clientes") muestra directamente la sección entrenador.
+En modo cliente (desde Perfil → Conexiones) carga `is_trainer` y muestra ambos flujos si procede.
 
 **Soy cliente:**
-- Genera token `client_invites_trainer` en `trainer_connections`
-- Muestra QR + enlace copiable (`https://gymtracker-ecru.vercel.app/connect?token=...`)
-- Si ya existe un enlace pendiente sin aceptar, lo reutiliza
-- Lista de entrenadores conectados (`active=true`) con opción de revocar
+- Genera token `client_invites_trainer` — QR + enlace copiable
+- Lista de entrenadores conectados con opción de revocar
 
-**Soy entrenador** (solo visible si `is_trainer = true`):
-- Genera token `trainer_invites_client` en `trainer_connections`
-- Misma lógica de QR/enlace
-- Lista de clientes conectados; clic en cliente → vista de historial del cliente
-- La vista de historial requiere policy RLS adicional (ver sección RLS)
+**Soy entrenador:**
+- Genera token `trainer_invites_client` — QR + enlace copiable
+- Lista de clientes; clic → `ClientDetailView`
+
+**`ClientDetailView` — ficha del cliente (sub-tabs):**
+- **Historial**: `workout_logs` del cliente
+- **Progreso**: gráfica PS por ejercicio del cliente
+- **Notas**: `ClientNotes` — lista de notas del entrenador para ese cliente
+  - Toggle "Compartir con cliente" al crear (campo `is_private`)
+  - Badges "Privada" (gris) / "Compartida" (verde) por nota
+  - Borrar con doble confirmación
+- **Actividad**: `ClientActivity` — actividad diaria del cliente (últimos 30 días, solo lectura)
+  - Gráfica de barras de pasos (últimos 7 días)
+  - Lista de días con pasos y actividades como pills
 
 ### ProfilePage (`src/pages/ProfilePage.jsx`)
+Dos sub-pestañas: **Mi perfil** | **Conexiones**
+
+**Mi perfil:**
 - Avatar con inicial del nombre, nombre completo y email
-- Toggle de interruptor para "Modo entrenador" — lee y escribe `profiles.is_trainer`
-- Sección "Descanso entre series": pills rápidas (Off/60s/90s/120s/180s) + input personalizado — lee y escribe `profiles.rest_seconds`
-- Botón "Cerrar sesión" (antes estaba en la barra de nav)
+- Toggle "Modo entrenador" — lee/escribe `profiles.is_trainer`; al cambiar → `window.location.reload()`
+- Configuración del temporizador de descanso (solo en modo cliente): pills 0/60/90/120/180s + input personalizado
+- Tipo de aviso al acabar (solo si timer activo): Vibración | Sonido | Vibración+Sonido
+- Botón "Cerrar sesión"
+
+**Conexiones:**
+- Embebe `ConnectionsPage` sin `trainerOnly`
+
+### NotesPage (`src/pages/NotesPage.jsx`)
+- Solo para clientes; accesible desde banner en HomePage
+- Carga notas del entrenador donde `client_id = user.id` AND `is_private = false`
+- Muestra nombre del entrenador (de `profiles`) + fecha + contenido de cada nota
+- Al montar: guarda `notesLastVisited = now()` en localStorage y llama `onVisit()` para limpiar la badge
 
 ### AcceptConnectionPage (`src/pages/AcceptConnectionPage.jsx`)
-Página pública en `/connect?token=TOKEN`. Gestiona su propia sesión internamente.
+Página pública en `/connect?token=TOKEN`.
 - Sin token válido → "Enlace no válido"
-- Con `client_id` y `trainer_id` ya rellenos → "Enlace ya usado"
-- Sin sesión → formulario inline login/registro con Google OAuth (redirectTo preserva el token)
+- Con campos ya rellenos → "Enlace ya usado"
+- Sin sesión → formulario inline login/registro con Google OAuth (preserva el token)
 - Con sesión → muestra quién invita, botón "Aceptar" rellena el campo vacío y pone `active=true`
 
 ---
@@ -387,15 +414,17 @@ Página pública en `/connect?token=TOKEN`. Gestiona su propia sesión intername
 ## Decisiones de diseño tomadas
 
 - Navegación sin react-router: estado `page` en `App.jsx`; excepción: `/connect` detectado con `URLSearchParams`
-- Navegación interna en `RoutinesPage` y `ConnectionsPage` con estado `view`/`tab` local
-- `WorkoutPage` no tiene pestaña en la nav — se entra siempre desde `HomePage`
-- Navegación adaptativa: barra superior en PC (`hidden md:flex`), barra inferior fija en móvil (`md:hidden`) con `env(safe-area-inset-bottom)` para iPhone
-- Ambas barras se ocultan durante el entrenamiento; el contenido tiene `pb-24 md:pb-0` para no quedar tapado
-- Recuperación de entrenamiento: `activeRoutineId` + `activeRoutineName` en localStorage; App.jsx arranca en WorkoutPage si existen
-- Grupos musculares disponibles: Pecho, Espalda, Piernas, Hombros, Bíceps, Tríceps, Cardio, Movilidad, Flexibilidad
-- Borradores de entrenamiento en `localStorage`, no en Supabase — `workout_logs.completed` siempre es `true`
-- Los inputs de series no usan placeholder con el valor anterior (evita confusión visual); el dato anterior va solo en la columna "Anterior"
-- Tokens de conexión: hex de 32 caracteres generado con `crypto.getRandomValues` en el cliente
+- `isTrainer` cargado del perfil al iniciar sesión determina qué juego de tabs mostrar
+- Al cambiar `is_trainer` desde ProfilePage → `window.location.reload()` (intencional: la nav cambia completamente)
+- Sub-pestañas internas (RoutinesPage, ProgressPage, ProfilePage) con estado local; no se reflejan en la URL
+- `WorkoutPage` no tiene pestaña en la nav — se entra siempre desde HomePage
+- Ambas barras de nav se ocultan durante el entrenamiento; contenido con `pb-24 md:pb-0`
+- Borradores de entrenamiento en `localStorage`, no en Supabase — `workout_logs.completed` siempre `true`
+- Campo `confirmed` por serie en el borrador: `{ reps, weight, confirmed }` — backward-compatible al cargar borradores viejos
+- Temporizador de descanso: no se reinicia si ya está corriendo; ignora pulsación si reps o peso vacíos
+- `HistoryPage.onBack` es opcional: con prop → botón volver visible; sin prop → sin botón (sub-tab)
+- Tokens de conexión: hex de 32 chars con `crypto.getRandomValues` en el cliente
+- Grupos musculares: Pecho, Espalda, Piernas, Hombros, Bíceps, Tríceps, Cardio, Movilidad, Flexibilidad
 
 ---
 
@@ -420,7 +449,7 @@ create policy "own data" on routine_exercises
 create policy "trainer or client read" on trainer_connections
   using (auth.uid() = trainer_id or auth.uid() = client_id);
 
--- Para que el entrenador pueda leer workout_logs de su cliente (pendiente de aplicar):
+-- Para que el entrenador pueda leer workout_logs de su cliente:
 create policy "trainer can read client logs" on workout_logs
   using (exists (
     select 1 from trainer_connections
@@ -429,19 +458,38 @@ create policy "trainer can read client logs" on workout_logs
       and active = true
   ));
 
--- daily_activity y activity_logs: cada usuario solo ve sus propios datos
+-- daily_activity y activity_logs: propio + entrenador conectado puede leer
 alter table daily_activity enable row level security;
 create policy "own data" on daily_activity
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+create policy "trainer can read client activity" on daily_activity
+  using (exists (
+    select 1 from trainer_connections
+    where trainer_id = auth.uid()
+      and client_id = daily_activity.user_id
+      and active = true
+  ));
 
 alter table activity_logs enable row level security;
 create policy "own data" on activity_logs
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
-```
+create policy "trainer can read client activity logs" on activity_logs
+  using (exists (
+    select 1 from trainer_connections
+    where trainer_id = auth.uid()
+      and client_id = activity_logs.user_id
+      and active = true
+  ));
 
-> La tabla `exercises` es por usuario (`user_id`), con RLS activo. Cada usuario ve y gestiona solo sus propios ejercicios.
+-- trainer_notes: entrenador escribe/lee todo; cliente solo lee is_private=false
+create policy "trainer owns notes" on trainer_notes
+  using (auth.uid() = trainer_id)
+  with check (auth.uid() = trainer_id);
+create policy "client reads shared notes" on trainer_notes
+  using (auth.uid() = client_id and is_private = false);
+```
 
 ---
 
@@ -454,114 +502,67 @@ create policy "own data" on activity_logs
 - [x] Tablas de v2 creadas (`profiles`, `admins`, `trainer_connections`, `trainer_notes`)
 - [x] `user_id` añadido a `exercises`, `routines`, `workout_logs`
 - [x] RLS activado con políticas basadas en `auth.uid()`
-- [x] `HomePage` — selección de rutina con "Hoy" automático
-- [x] `WorkoutPage` — registro de series con borrador en localStorage
-- [x] `HistoryPage` — historial con detalle de sesiones
-- [x] `RoutinesPage` — gestión completa de rutinas y catálogo de ejercicios
-- [x] `ProgressPage` — gráfica de PS por ejercicio con recharts
+- [x] `HomePage` — selección de rutina con "Hoy" automático + banners de entrenamiento activo y notas nuevas
+- [x] `WorkoutPage` — botón de confirmación de serie, temporizador solo desde botón, Finalizar no flotante
+- [x] `HistoryPage` — historial con detalle de sesiones, `onBack` opcional
+- [x] `RoutinesPage` — Mis rutinas | Ejercicios | Historial (sub-tabs)
+- [x] `ProgressPage` — Progreso | Actividad (sub-tabs)
+- [x] `ActivityPage` — pasos + actividades extra (Hoy | Historial)
 - [x] Deploy en Vercel con variables de entorno configuradas
 - [x] `LoginPage` — email/contraseña + Google OAuth
 - [x] `RegisterPage` — nombre, email, contraseña + Google OAuth
 - [x] Sesión persistente con `getSession()` + `onAuthStateChange`
-- [x] Rutas protegidas: sin sesión → LoginPage
-- [x] Botón "Salir" en la nav (`supabase.auth.signOut()`)
-- [x] `user` pasado como prop a todas las páginas; RLS filtra datos automáticamente
-- [x] `ConnectionsPage` — dos flujos (cliente invita entrenador / entrenador invita cliente)
+- [x] `ConnectionsPage` — ficha de cliente con 4 sub-tabs: Historial | Progreso | Notas | Actividad
+- [x] `ClientNotes` — notas con `is_private`, badges Privada/Compartida, doble confirmación al borrar
+- [x] `ClientActivity` — actividad diaria del cliente (read-only) para el entrenador
 - [x] `AcceptConnectionPage` — página pública `/connect?token=...` con login/registro inline
-- [x] QR generado con `qrcode.react`, enlace copiable, reutiliza tokens pendientes
+- [x] QR con `qrcode.react`, enlace copiable, reutiliza tokens pendientes
 - [x] `vercel.json` con rewrite para SPA routing en producción
-- [x] `ProfilePage` — perfil con toggle is_trainer y botón cerrar sesión
-- [x] `ConnectionsPage` — oculta sección entrenador si `is_trainer = false`
-- [x] `RoutinesPage` — oculta pestaña Plantillas si `is_trainer = false`
-- [x] `ExerciseList` — diferenciación visual propios/sistema, filtro "Solo míos", permisos de edición
-- [x] `ExerciseForm` — guarda `created_by = user.id` al crear
-- [x] `RoutineDetail` — filtro "Solo míos" en el catálogo al añadir ejercicio
-- [x] `WorkoutPage` — modal de confirmación antes de finalizar con resumen de series
-- [x] Recuperación de entrenamiento activo tras recarga del navegador (localStorage)
-- [x] Navegación adaptativa: barra inferior en móvil, barra superior en PC
-- [x] `ProgressPage` — pestaña "Actividad": pasos diarios + actividades extra (running, ciclismo…)
-- [x] Tablas `daily_activity` y `activity_logs` creadas en Supabase con RLS
-- [x] Temporizador de descanso entre series en `WorkoutPage` (cuenta atrás + barra + aviso configurable)
-- [x] `ProfilePage` — configuración del descanso: tiempo (pills + personalizado) y tipo de aviso (vibración/sonido/ambos)
+- [x] `ProfilePage` — Mi perfil | Conexiones (sub-tabs); toggle is_trainer, config descanso, cerrar sesión
+- [x] `NotesPage` — notas compartidas del entrenador, solo lectura, actualiza `notesLastVisited`
+- [x] Navegación adaptativa 4-tabs cliente / 3-tabs entrenador (móvil bottom nav + PC top nav)
+- [x] Temporizador de descanso configurable (duración + tipo de aviso) en `WorkoutPage`
+- [x] `profiles.rest_seconds` y `profiles.rest_alert` configurables desde `ProfilePage`
+- [x] `trainer_notes.is_private` — notas privadas/compartidas con badge visual
+- [x] Tablas `daily_activity` y `activity_logs` con RLS (propio + entrenador conectado)
+
+### Pendiente de aplicar en Supabase
+- Políticas RLS de `trainer_notes`: que el entrenador pueda escribir/leer sus notas y que el cliente solo lea `is_private = false`
+- Políticas RLS de `daily_activity` y `activity_logs`: que el entrenador conectado pueda leer datos del cliente
+
+> `ALTER TABLE trainer_notes ADD COLUMN ... is_private` — **ya aplicado** (verificado vía REST API)
 
 ---
 
-## Pendiente / Ideas para próximas sesiones
+## Versiones completadas
 
-- Policy RLS para que el entrenador lea `workout_logs` de su cliente (SQL ya documentado arriba)
-- Notas en el entrenamiento (`workout_logs.notes`)
-- "Conexiones" accesible desde móvil (actualmente solo en barra de PC)
-
----
-
-## Versiones futuras
-
-### v2 — Login y uso propio seguro ✓ COMPLETADO
-- Supabase Auth con email/contraseña y Google OAuth
-- LoginPage, RegisterPage y sesión persistente implementados
-- Rutas protegidas con estado de sesión en App.jsx
-- RLS activo en todas las tablas
-
-### v3 — Entrenadores y clientes ✓ COMPLETADO
-- Sistema de invitación mediante QR/enlace con token (dos flujos: cliente→entrenador y entrenador→cliente)
-- `trainer_connections` con `token`, `type`, `active`; tokens generados en cliente con Web Crypto API
-- `AcceptConnectionPage` pública con login/registro inline y Google OAuth que preserva el token
-- Gestión de conexiones activas con opción de revocar
-- Vista de historial del cliente desde el panel del entrenador
-
-### v4 — Funcionalidades del entrenador ✓ COMPLETADO
-- Panel del entrenador con lista de clientes y acceso a su historial y progreso
-- Posibilidad de crear/editar rutinas para un cliente
-- Notas del entrenador por cliente (`trainer_notes`)
-- Policy RLS para leer `workout_logs` del cliente (SQL documentado)
-
-### v5 — Perfil de usuario y mejoras de UX ✓ COMPLETADO
-- ProfilePage: nombre, email, toggle "Modo entrenador" (is_trainer), cerrar sesión
-- ConnectionsPage oculta la sección de entrenador si is_trainer = false
-- RoutinesPage oculta la pestaña Plantillas si is_trainer = false
-- Botón "Salir" movido de la nav a ProfilePage; nav queda más limpia
-- ExerciseList: diferenciación visual propios/sistema, filtro "Solo míos", permisos edición/borrado
-- ExerciseForm: guarda created_by = user.id al crear ejercicios
-- RoutineDetail: filtro "Solo míos" en el catálogo de ejercicios
-- WorkoutPage: modal de confirmación antes de finalizar con recuento de ejercicios y series
-
-### v6 — Navegación adaptativa y recuperación de entrenamiento ✓ COMPLETADO
-- Barra de navegación inferior fija en móvil (<768px) con 5 iconos y safe-area para iPhone
-- Barra superior en PC (≥768px) sin cambios
-- Recuperación automática del entrenamiento activo tras recarga del navegador (localStorage)
-- Banner "Entrenamiento en curso" en HomePage cuando el usuario navega atrás sin finalizar
-
-### v8 — Temporizador de descanso entre series ✓ COMPLETADO
-- Al completar una serie (blur en input de peso con ambos campos rellenos), arranca cuenta atrás
-- Solo si no es la última serie del ejercicio
-- Panel flotante negro sobre el botón "Finalizar": número grande, barra de progreso, "Siguiente: Serie X · Ejercicio", botón "Saltar descanso"
-- Al llegar a 0: vibración (`navigator.vibrate`) + beep (Web Audio API, sin archivos externos)
-- Duración configurable en ProfilePage: pills 0/60/90/120/180s + input personalizado
-- Si `rest_seconds = 0`, el temporizador está desactivado sin cambios visuales
-- Tipo de aviso configurable en `profiles.rest_alert`: `'vibrate'` | `'sound'` | `'both'` (default `'both'`)
+### v1–v5: Base, auth, conexiones, perfil ✓
+### v6 — Navegación adaptativa + recuperación de entrenamiento ✓
+### v7 — Registro de actividad diaria (pasos + actividades extra) ✓
+### v8 — Temporizador de descanso entre series ✓
+- Configurable: duración (0/60/90/120/180s + personalizado) y tipo de aviso (vibración/sonido/ambos)
 - Campos en `profiles`: `rest_seconds int default 90`, `rest_alert text default 'both'`
 
-### v7 — Registro de actividad diaria ✓ COMPLETADO
-- Nueva pestaña "Actividad" en ProgressPage junto a "Ejercicios"
-- Sub-pestaña "Hoy": registro de pasos (upsert en `daily_activity`) y actividades extra (running, ciclismo, natación, senderismo, otra)
-- Sub-pestaña "Historial": últimos 30 días con gráfica de barras de pasos (últimos 7 días) y lista con pills de actividades
-- Tablas `daily_activity` (unique por user+fecha) y `activity_logs` con RLS
-
-### v8 — App móvil
-- React Native con Expo
-- Misma base de datos Supabase, sin cambios en el backend
+### v9 — Navegación reorganizada + notas + actividad del cliente ✓
+- 4 tabs cliente (Inicio|Rutinas|Progreso|Perfil), 3 tabs entrenador (Mis clientes|Plantillas|Perfil)
+- Historial → sub-tab de Rutinas; Actividad → sub-tab de Progreso; Conexiones → sub-tab de Perfil
+- `trainer_notes.is_private`: notas privadas/compartidas; `NotesPage` muestra al cliente solo las compartidas
+- `ClientActivity` en ficha de cliente: actividad diaria del cliente visible para el entrenador
+- `WorkoutPage`: columna "✓" con botón de confirmación de serie (reemplaza "Anterior")
+- Temporizador solo desde botón de confirmación; no se reinicia si ya corre
 
 ---
 
 ## Mensaje para reanudar en una nueva sesión
 
 ```
-Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel y funciona
-en producción — React + Vite + Tailwind v4 + Supabase + recharts, sin backend
-propio. Autenticación completa (email/contraseña + Google OAuth), sesión
-persistente, RLS activo. Pantallas: HomePage, WorkoutPage, HistoryPage,
-RoutinesPage, ProgressPage (con pestaña Actividad: pasos + actividades extra),
-LoginPage, RegisterPage, ConnectionsPage, AcceptConnectionPage y ProfilePage.
-Sistema de conexiones entrenador-cliente con QR/enlace y token funcionando.
+Lee el CONTEXT.md adjunto. GymTracker está desplegado en Vercel — React + Vite +
+Tailwind v4 + Supabase + recharts, sin backend propio. Autenticación completa,
+RLS activo. Navegación adaptativa: 4 tabs cliente (Inicio|Rutinas|Progreso|Perfil),
+3 tabs entrenador (Mis clientes|Plantillas|Perfil), con sub-pestañas internas.
+Pantallas: HomePage, WorkoutPage (botón confirmación de serie), HistoryPage,
+RoutinesPage (Mis rutinas|Ejercicios|Historial), ProgressPage (Progreso|Actividad),
+ActivityPage, ConnectionsPage (ficha cliente con Historial|Progreso|Notas|Actividad),
+ProfilePage (Mi perfil|Conexiones), NotesPage, AcceptConnectionPage.
 El siguiente paso es [DESCRIBIR TAREA].
 ```

@@ -26,3 +26,8 @@ dist-ssr
 # Variables de entorno con credenciales — no subir nunca a git
 .env
 .env.*
+
+.vercel
+
+# MCP config — puede contener tokens de acceso
+.mcp.json

@@ -248,7 +248,8 @@ function RoutineList({ user, onSelectRoutine }) {
     }
     setDeleting(id)
     setConfirmDeleteId(null)
-    await supabase.from('routines').delete().eq('id', id)
+    const { error } = await supabase.from('routines').delete().eq('id', id)
+    if (error) console.error('Error borrando rutina:', error)
     setDeleting(null)
     loadRoutines()
   }
@@ -548,7 +549,8 @@ function TemplateList({ user, onSelectTemplate }) {
   async function deleteTemplate(id) {
     if (confirmDeleteId !== id) { setConfirmDeleteId(id); return }
     setConfirmDeleteId(null)
-    await supabase.from('routines').delete().eq('id', id)
+    const { error } = await supabase.from('routines').delete().eq('id', id)
+    if (error) console.error('Error borrando plantilla:', error)
     loadTemplates()
   }
 
