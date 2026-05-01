@@ -774,7 +774,8 @@ function ClientRoutines({ clientId }) {
   }
 
   async function deleteRoutine(id) {
-    await supabase.from('routines').delete().eq('id', id)
+    const { error } = await supabase.from('routines').delete().eq('id', id)
+    if (error) { console.error('Error borrando rutina de cliente:', error); return }
     setAssigned(rs => rs.filter(r => r.id !== id))
     setOwn(rs => rs.filter(r => r.id !== id))
   }
